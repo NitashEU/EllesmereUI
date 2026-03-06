@@ -3,11 +3,9 @@ package-as: EllesmereUI
 move-folders:
   EllesmereUI/EllesmereUIActionBars: EllesmereUIActionBars
   EllesmereUI/EllesmereUIAuraBuffReminders: EllesmereUIAuraBuffReminders
-  EllesmereUI/EllesmereUIBasics: EllesmereUIBasics
   EllesmereUI/EllesmereUICooldownManager: EllesmereUICooldownManager
   EllesmereUI/EllesmereUICursor: EllesmereUICursor
   EllesmereUI/EllesmereUINameplates: EllesmereUINameplates
-  EllesmereUI/EllesmereUIRaidFrames: EllesmereUIRaidFrames
   EllesmereUI/EllesmereUIResourceBars: EllesmereUIResourceBars
   EllesmereUI/EllesmereUIUnitFrames: EllesmereUIUnitFrames
 
@@ -38,3 +36,5 @@ ignore:
   - .kiro
   - README.md
   - CHANGELOG.md
+  - EllesmereUI/EllesmereUIRaidFrames
+  - EllesmereUI/EllesmereUIBasics

@@ -24,7 +24,8 @@ local BNET_CLIENT_WOW = BNET_CLIENT_WOW or "WoW"
 local FRIENDS_BUTTON_TYPE_BNET = FRIENDS_BUTTON_TYPE_BNET or 2
 local FRIENDS_BUTTON_TYPE_WOW  = FRIENDS_BUTTON_TYPE_WOW or 1
 
-local FONT_PATH = "Interface\\AddOns\\EllesmereUI\\media\\fonts\\Expressway.TTF"
+local FONT_PATH = (EllesmereUI and EllesmereUI.GetFontPath and EllesmereUI.GetFontPath("extras"))
+    or "Interface\\AddOns\\EllesmereUI\\media\\fonts\\Expressway.TTF"
 
 local CLASS_COLORS = {} -- populated from RAID_CLASS_COLORS at runtime
 

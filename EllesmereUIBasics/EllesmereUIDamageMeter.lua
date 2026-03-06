@@ -5,7 +5,8 @@
 -------------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
 
-local FONT_PATH = "Interface\\AddOns\\EllesmereUI\\media\\fonts\\Expressway.TTF"
+local FONT_PATH = (EllesmereUI and EllesmereUI.GetFontPath and EllesmereUI.GetFontPath("extras"))
+    or "Interface\\AddOns\\EllesmereUI\\media\\fonts\\Expressway.TTF"
 local BG_R, BG_G, BG_B, BG_A = 0.055, 0.063, 0.078, 0.92
 local BAR_BG_A = 0.35
 local BORDER_A = 0.15

@@ -53,7 +53,8 @@ local sin   = math.sin
 -------------------------------------------------------------------------------
 --  Constants
 -------------------------------------------------------------------------------
-local FONT_PATH   = "Interface\\AddOns\\EllesmereUI\\media\\fonts\\Expressway.TTF"
+local FONT_PATH   = (EllesmereUI and EllesmereUI.GetFontPath and EllesmereUI.GetFontPath("extras"))
+    or "Interface\\AddOns\\EllesmereUI\\media\\fonts\\Expressway.TTF"
 local LOCK_INNER  = "Interface\\AddOns\\EllesmereUI\\media\\eui-unlocked-inner-2.png"
 local LOCK_OUTER  = "Interface\\AddOns\\EllesmereUI\\media\\eui-unlocked-outer-2.png"
 local LOCK_TOP    = "Interface\\AddOns\\EllesmereUI\\media\\eui-unlocked-top-2.png"

@@ -23,7 +23,8 @@ local pairs, ipairs, type = pairs, ipairs, type
 --  Constants
 -------------------------------------------------------------------------------
 local MEDIA = "Interface\\AddOns\\EllesmereUI\\media\\"
-local FONT_PATH = MEDIA .. "fonts\\Expressway.TTF"
+local FONT_PATH = (EllesmereUI and EllesmereUI.GetFontPath and EllesmereUI.GetFontPath("extras"))
+    or MEDIA .. "fonts\\Expressway.TTF"
 
 local SLOT_SIZE = 37
 local SLOT_PAD  = 4

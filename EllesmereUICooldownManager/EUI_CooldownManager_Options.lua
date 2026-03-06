@@ -37,7 +37,8 @@ initFrame:SetScript("OnEvent", function(self)
     end
 
     -- Inline text input helper (no W:InputBox exists)
-    local FONT_PATH = "Interface\\AddOns\\EllesmereUI\\media\\fonts\\Expressway.TTF"
+    local FONT_PATH = (EllesmereUI and EllesmereUI.GetFontPath and EllesmereUI.GetFontPath("cdm"))
+        or "Interface\\AddOns\\EllesmereUI\\media\\fonts\\Expressway.TTF"
     local function MakeTextInput(parent, label, yOffset, getValue, setValue)
         local ROW_H = 50
         local frame = CreateFrame("Frame", nil, parent)

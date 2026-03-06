@@ -101,7 +101,8 @@ initFrame:SetScript("OnEvent", function(self)
         return EllesmereUIDB and EllesmereUIDB.previewHintDismissed
     end
 
-    local FONT_PATH = "Interface\\AddOns\\EllesmereUI\\media\\fonts\\Expressway.TTF"
+    local FONT_PATH = (EllesmereUI and EllesmereUI.GetFontPath and EllesmereUI.GetFontPath("resourceBars"))
+        or "Interface\\AddOns\\EllesmereUI\\media\\fonts\\Expressway.TTF"
     local CONTENT_PAD = 45
     local SIDE_PAD = 20
 

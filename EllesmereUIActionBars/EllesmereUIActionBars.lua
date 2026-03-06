@@ -1,4 +1,4 @@
--------------------------------------------------------------------------------
+﻿-------------------------------------------------------------------------------
 --  EllesmereUIActionBars.lua  Custom Action Bars (full rewrite)
 --
 --  Creates its own secure action bar frames and buttons instead of hooking
@@ -109,7 +109,8 @@ ns.EXTRA_BARS          = EXTRA_BARS
 --  Media paths
 -------------------------------------------------------------------------------
 local MEDIA_DIR = "Interface\\AddOns\\EllesmereUIActionBars\\Media\\"
-local FONT_PATH = "Interface\\AddOns\\EllesmereUI\\media\\fonts\\Expressway.TTF"
+local FONT_PATH = (EllesmereUI and EllesmereUI.GetFontPath and EllesmereUI.GetFontPath("actionBars"))
+    or "Interface\\AddOns\\EllesmereUI\\media\\fonts\\Expressway.TTF"
 local HIGHLIGHT_TEXTURES = {
     MEDIA_DIR .. "highlight-2.png",
     MEDIA_DIR .. "highlight-3.png",
@@ -628,15 +629,32 @@ local function CreateBarFrame(info)
         frame:SetAttribute("barLength", NUM_ACTIONBAR_BUTTONS)
         frame:SetAttribute("overrideBarLength", NUM_ACTIONBAR_BUTTONS)
 
-        -- Secure snippet: when page changes, compute offset and broadcast to children
+        -- Secure snippet: when page changes, compute offset and broadcast to children.
+        -- Vehicle/override/possess pages are resolved dynamically at state-change time
+        -- so the correct bar index is used regardless of when the addon loaded.
         frame:SetAttribute("_onstate-page", [[
             local page = tonumber(newstate) or 1
+
+            if newstate == "possess" or page == 11 then
+                if HasVehicleActionBar() then
+                    page = GetVehicleBarIndex()
+                elseif HasOverrideActionBar() then
+                    page = GetOverrideBarIndex()
+                elseif HasTempShapeshiftActionBar() then
+                    page = GetTempShapeshiftBarIndex()
+                elseif HasBonusActionBar() then
+                    page = GetBonusBarIndex()
+                else
+                    page = 12
+                end
+            end
+
             local barLen = self:GetAttribute("barLength")
             local offset = (page - 1) * barLen
 
             -- Pages 1-11 are normal action bar pages; skip the unusable
             -- bar-12 slot range (slots 133-144).  Override/vehicle/possess
-            -- pages (12+) map directly to their action slots â€” no skip.
+            -- pages (12+) map directly to their action slots.
             if page <= 11 and offset >= 132 then
                 offset = offset + 12
             end
@@ -1163,7 +1181,7 @@ local function EnsureBorders(btn)
     local PP = EllesmereUI and EllesmereUI.PP
     local b = {}
     for i = 1, 4 do
-        b[i] = btn:CreateTexture(nil, "OVERLAY", nil, 7)
+        b[i] = btn:CreateTexture(nil, "OVERLAY", nil, -1)
         b[i]:SetColorTexture(0, 0, 0, 1)
         if PP then PP.DisablePixelSnap(b[i]) end
     end

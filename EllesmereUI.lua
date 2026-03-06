@@ -116,18 +116,7 @@ local DD_ITEM_HL_A                            = 0.08                   -- menu i
 local DD_ITEM_SEL_A                           = 0.04                   -- menu item highlight alpha (active selection)
 
 -- Sidebar nav  (white + alpha -- adapts to any background tint)
-local NAV = {
-    SEL_TXT_A  = 1,         SEL_ICON_A = 1,
-    EN_TXT_A   = 0.6,       EN_ICON_A  = 0.60,
-    DIS_TXT_R  = 1,         DIS_TXT_G  = 1,         DIS_TXT_B  = 1,
-    DIS_TXT_A  = 0.11,
-    DIS_ICON_A = 0.20,
-    HOV_EN_TXT_A = 1,
-    HOV_EN_R   = 1,         HOV_EN_G   = 1,         HOV_EN_B   = 1,
-    HOV_EN_A   = 0.86,
-    HOV_DIS_R  = 1,         HOV_DIS_G  = 1,         HOV_DIS_B  = 1,
-    HOV_DIS_A  = 0.39,
-}
+-- NAV values inlined directly into NAV_* locals below to avoid an extra file-scope local
 
 -- Multi-widget layout  (dual = 2-up, triple = 3-up -- shared by all widget types)
 local DUAL_ITEM_W       = 350              -- width of each item in a 2-up row
@@ -180,14 +169,14 @@ local TEXT_DIM        = { r = TEXT_DIM_R, g = TEXT_DIM_G, b = TEXT_DIM_B, a = TE
 local TEXT_SECTION    = { r = TEXT_SECTION_R, g = TEXT_SECTION_G, b = TEXT_SECTION_B, a = TEXT_SECTION_A }
 
 -- Sidebar nav states
-local NAV_SELECTED_TEXT   = { r = TEXT_WHITE_R, g = TEXT_WHITE_G, b = TEXT_WHITE_B, a = NAV.SEL_TXT_A }
-local NAV_SELECTED_ICON_A = NAV.SEL_ICON_A
-local NAV_ENABLED_TEXT    = { r = TEXT_WHITE_R, g = TEXT_WHITE_G, b = TEXT_WHITE_B, a = NAV.EN_TXT_A }
-local NAV_ENABLED_ICON_A  = NAV.EN_ICON_A
-local NAV_DISABLED_TEXT   = { r = NAV.DIS_TXT_R, g = NAV.DIS_TXT_G, b = NAV.DIS_TXT_B, a = NAV.DIS_TXT_A }
-local NAV_DISABLED_ICON_A = NAV.DIS_ICON_A
-local NAV_HOVER_ENABLED_TEXT  = { r = NAV.HOV_EN_R, g = NAV.HOV_EN_G, b = NAV.HOV_EN_B, a = NAV.HOV_EN_A }
-local NAV_HOVER_DISABLED_TEXT = { r = NAV.HOV_DIS_R, g = NAV.HOV_DIS_G, b = NAV.HOV_DIS_B, a = NAV.HOV_DIS_A }
+local NAV_SELECTED_TEXT   = { r = TEXT_WHITE_R, g = TEXT_WHITE_G, b = TEXT_WHITE_B, a = 1 }
+local NAV_SELECTED_ICON_A = 1
+local NAV_ENABLED_TEXT    = { r = TEXT_WHITE_R, g = TEXT_WHITE_G, b = TEXT_WHITE_B, a = 0.6 }
+local NAV_ENABLED_ICON_A  = 0.60
+local NAV_DISABLED_TEXT   = { r = 1, g = 1, b = 1, a = 0.11 }
+local NAV_DISABLED_ICON_A = 0.20
+local NAV_HOVER_ENABLED_TEXT  = { r = 1, g = 1, b = 1, a = 0.86 }
+local NAV_HOVER_DISABLED_TEXT = { r = 1, g = 1, b = 1, a = 0.39 }
 
 -- Dropdown widget colours: widgets reference DD_BG_*, DD_BRD_*, DD_TXT_* directly
 
@@ -241,6 +230,19 @@ local CLASS_COLOR_MAP = {
 -- Font (Expressway lives in EllesmereUI/media)
 local EXPRESSWAY = MEDIA_PATH .. "fonts\\Expressway.ttf"
 
+-- Locale-specific system font fallback for clients whose language requires
+-- glyphs not present in our custom fonts (CJK, Cyrillic, etc.)
+local LOCALE_FONT_FALLBACK
+do
+    local _locale = GetLocale()
+    if _locale == "zhCN" or _locale == "zhTW" then
+        LOCALE_FONT_FALLBACK = "Fonts\\ARKai_T.ttf"
+    elseif _locale == "koKR" then
+        LOCALE_FONT_FALLBACK = "Fonts\\2002.TTF"
+    elseif _locale == "ruRU" then
+        LOCALE_FONT_FALLBACK = "Fonts\\FRIZQT___CYR.TTF"
+    end
+end
 -------------------------------------------------------------------------------
 --  Addon Roster  --  per-addon icon on/off from EllesmereUI/media
 -------------------------------------------------------------------------------
@@ -272,6 +274,8 @@ local EllesmereUI = {}
 _G.EllesmereUI = EllesmereUI
 EllesmereUI.GLOBAL_KEY = "_EUIGlobal"
 EllesmereUI.ADDON_ROSTER = ADDON_ROSTER
+EllesmereUI.LOCALE_FONT_FALLBACK = LOCALE_FONT_FALLBACK
+EllesmereUI.EXPRESSWAY = LOCALE_FONT_FALLBACK or EXPRESSWAY
 
 local mainFrame, bgFrame, clickArea, sidebar, contentFrame
 local headerFrame, tabBar, scrollFrame, scrollChild, footerFrame, contentHeaderFrame
@@ -299,24 +303,27 @@ local function ClearWidgetRefreshList()
 end
 
 -- Hide all children/regions of a frame without orphaning them
-local _hideAllScratch = {}
-local function _packIntoScratch(...)
-    local n = select("#", ...)
-    for i = 1, n do _hideAllScratch[i] = select(i, ...) end
-    return n
-end
-local function HideAllChildren(parent, keepSet)
-    -- Pack children into reusable scratch table (one GetChildren call)
-    local n = _packIntoScratch(parent:GetChildren())
-    for i = 1, n do
-        if not (keepSet and keepSet[_hideAllScratch[i]]) then _hideAllScratch[i]:Hide() end
-        _hideAllScratch[i] = nil
+local HideAllChildren
+do
+    local _hideAllScratch = {}
+    local function _packIntoScratch(...)
+        local n = select("#", ...)
+        for i = 1, n do _hideAllScratch[i] = select(i, ...) end
+        return n
     end
-    -- Pack regions into same scratch table (one GetRegions call)
-    n = _packIntoScratch(parent:GetRegions())
-    for i = 1, n do
-        if not (keepSet and keepSet[_hideAllScratch[i]]) then _hideAllScratch[i]:Hide() end
-        _hideAllScratch[i] = nil
+    HideAllChildren = function(parent, keepSet)
+        -- Pack children into reusable scratch table (one GetChildren call)
+        local n = _packIntoScratch(parent:GetChildren())
+        for i = 1, n do
+            if not (keepSet and keepSet[_hideAllScratch[i]]) then _hideAllScratch[i]:Hide() end
+            _hideAllScratch[i] = nil
+        end
+        -- Pack regions into same scratch table (one GetRegions call)
+        n = _packIntoScratch(parent:GetRegions())
+        for i = 1, n do
+            if not (keepSet and keepSet[_hideAllScratch[i]]) then _hideAllScratch[i]:Hide() end
+            _hideAllScratch[i] = nil
+        end
     end
 end
 
@@ -337,7 +344,7 @@ end
 -------------------------------------------------------------------------------
 local function MakeFont(parent, size, flags, r, g, b, a)
     local fs = parent:CreateFontString(nil, "OVERLAY")
-    fs:SetFont(EXPRESSWAY, size, flags or "")
+    fs:SetFont(LOCALE_FONT_FALLBACK or EXPRESSWAY, size, flags or "")
     if r then fs:SetTextColor(r, g, b, a or 1) end
     return fs
 end
@@ -1039,6 +1046,8 @@ end
 -- Resolve a font name to a full file path for a given addon
 -- addonDir: the addon's Interface\AddOns\<name> path (used to build EllesmereUI/media/fonts/ path)
 local function ResolveFontName(fontName)
+    -- For locales that need system fonts (CJK, Cyrillic), skip custom fonts
+    if LOCALE_FONT_FALLBACK then return LOCALE_FONT_FALLBACK end
     local bliz = EllesmereUI.FONT_BLIZZARD[fontName]
     if bliz then return bliz end
     local file = EllesmereUI.FONT_FILES[fontName]

@@ -1247,7 +1247,8 @@ initFrame:SetScript("OnEvent", function(self)
         local W = EllesmereUI.Widgets
         local y = yOffset
         local _, h
-        local fontPath = "Interface\\AddOns\\EllesmereUI\\media\\fonts\\Expressway.TTF"
+        local fontPath = (EllesmereUI and EllesmereUI.GetFontPath and EllesmereUI.GetFontPath("auraBuff"))
+            or "Interface\\AddOns\\EllesmereUI\\media\\fonts\\Expressway.TTF"
 
         parent._showRowDivider = true
 
