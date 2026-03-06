@@ -98,6 +98,7 @@ local POWER_COLORS = {
     ["MAELSTROM_BAR"]    = { 0.00, 0.50, 1.00 },
     ["TIP_OF_THE_SPEAR"] = { 0.67, 0.83, 0.45 },
     ["WHIRLWIND_STACKS"] = { 0.78, 0.61, 0.43 },
+    ["BREWMASTER_STAGGER"] = { 0.52, 1.00, 0.52 },  -- green (light stagger default)
 }
 
 -- Dark theme colors (matches unit frames)
@@ -167,6 +168,12 @@ local function GetSecondaryResource()
     elseif classFile == "MONK" and (spec == 3) then
         local mx = UnitPowerMax("player", PT.CHI)
         return { power = PT.CHI, max = (not issecretvalue or not issecretvalue(mx)) and mx or 5, type = "points" }
+    elseif classFile == "MONK" and (spec == 1) then
+        -- Brewmaster: stagger as a bar (max = player max health)
+        local mx = UnitHealthMax("player") or 1
+        if issecretvalue and issecretvalue(mx) then mx = 1 end
+        if mx <= 0 then mx = 1 end
+        return { power = "BREWMASTER_STAGGER", max = mx, type = "bar" }
     elseif classFile == "WARLOCK" then
         local mx = UnitPowerMax("player", PT.SOUL_SHARDS)
         return { power = PT.SOUL_SHARDS, max = (not issecretvalue or not issecretvalue(mx)) and mx or 5, type = "points" }
@@ -1566,7 +1573,7 @@ local function UpdateSecondaryResource()
             end
         end
     elseif cachedSecondary.type == "bar" then
-        -- Bar-style secondary (e.g. Devourer soul fragments, Elemental maelstrom)
+        -- Bar-style secondary (e.g. Devourer soul fragments, Elemental maelstrom, Brewmaster stagger)
         if secondaryBar then
             local cur, maxC = 0, maxPts
             if powerType == "SOUL_FRAGMENTS_DEVOURER" and EllesmereUI and EllesmereUI.GetSoulFragments then
@@ -1577,6 +1584,26 @@ local function UpdateSecondaryResource()
                 maxC = UnitPowerMax("player", PT.MAELSTROM) or maxPts
                 if issecretvalue and issecretvalue(maxC) then maxC = maxPts end
                 if maxC <= 0 then maxC = maxPts end
+            elseif powerType == "BREWMASTER_STAGGER" then
+                cur = UnitStagger("player") or 0
+                maxC = UnitHealthMax("player") or 1
+                local curTainted = issecretvalue and issecretvalue(cur)
+                local maxTainted = issecretvalue and issecretvalue(maxC)
+                -- Apply stagger threshold colors only when using default power colors
+                if not sp.darkTheme and not sp.classColored then
+                    if not curTainted and not maxTainted and maxC > 0 then
+                        local pct = cur / maxC
+                        if pct >= 0.6 then
+                            secondaryBar:GetStatusBarTexture():SetVertexColor(1.0, 0.2, 0.2, 1)
+                        elseif pct >= 0.3 then
+                            secondaryBar:GetStatusBarTexture():SetVertexColor(1.0, 0.85, 0.2, 1)
+                        else
+                            secondaryBar:GetStatusBarTexture():SetVertexColor(0.2, 0.8, 0.2, 1)
+                        end
+                    end
+                end
+                if maxTainted then maxC = maxPts end
+                if not maxTainted and maxC <= 0 then maxC = 1 end
             end
             secondaryBar:SetMinMaxValues(0, maxC)
             -- Secret-aware update: pass secret values directly to the
@@ -1591,12 +1618,22 @@ local function UpdateSecondaryResource()
             -- Count text
             if sp.showText and secondaryFrame._countText then
                 if not tainted then
-                    secondaryFrame._countText:SetText(tostring(cur) .. " / " .. tostring(maxC))
+                    if powerType == "BREWMASTER_STAGGER" then
+                        -- Show stagger as percentage of max health
+                        local pct = maxC > 0 and (cur / maxC * 100) or 0
+                        secondaryFrame._countText:SetText(format("%d", pct) .. "%")
+                    else
+                        secondaryFrame._countText:SetText(tostring(cur) .. " / " .. tostring(maxC))
+                    end
                 else
                     -- Secret value path: try UnitPowerPercent first, fall back to tostring
-                    local pct = UnitPowerPercent and UnitPowerPercent("player", PT.MAELSTROM) or 0
-                    if not issecretvalue(pct) then
-                        secondaryFrame._countText:SetText(format("%d", pct) .. "%")
+                    if powerType == "MAELSTROM_BAR" then
+                        local pct = UnitPowerPercent and UnitPowerPercent("player", PT.MAELSTROM) or 0
+                        if not issecretvalue(pct) then
+                            secondaryFrame._countText:SetText(format("%d", pct) .. "%")
+                        else
+                            secondaryFrame._countText:SetText(tostring(cur))
+                        end
                     else
                         secondaryFrame._countText:SetText(tostring(cur))
                     end
@@ -1891,9 +1928,7 @@ local CAST_BAR_TEXTURES = {
 }
 local CAST_BAR_TEXTURE_ORDER = {
     "none", "blizzard",
-    "---",
     "beautiful", "plating",
-    "---",
     "atrocity", "divide", "glass",
     "gradient-lr", "gradient-rl", "gradient-bt", "gradient-tb",
     "matte", "sheer",
@@ -1938,7 +1973,6 @@ local BAR_TEXTURES = {
 }
 local BAR_TEXTURE_ORDER = {
     "none", "beautiful", "plating",
-    "---",
     "atrocity", "divide", "glass",
     "gradient-lr", "gradient-rl", "gradient-bt", "gradient-tb",
     "matte", "sheer",
@@ -2595,6 +2629,10 @@ end
 local function OnEvent(self, event, ...)
     if event == "UNIT_HEALTH" then
         UpdateHealthBar()
+        -- Stagger is based on health, so update secondary resource too
+        if cachedSecondary and cachedSecondary.power == "BREWMASTER_STAGGER" then
+            UpdateSecondaryResource()
+        end
     elseif event == "UNIT_POWER_UPDATE" or event == "UNIT_POWER_FREQUENT" then
         local unit, powerToken = ...
         if unit == "player" then
@@ -2603,6 +2641,17 @@ local function OnEvent(self, event, ...)
         end
     elseif event == "UNIT_MAXHEALTH" then
         UpdateHealthBar()
+        -- Stagger max is player max health, so rebuild if needed
+        if cachedSecondary and cachedSecondary.power == "BREWMASTER_STAGGER" then
+            local newMax = UnitHealthMax("player") or 1
+            if not issecretvalue or not issecretvalue(newMax) then
+                if newMax > 0 and newMax ~= cachedSecondary.max then
+                    cachedSecondary.max = newMax
+                    BuildBars()
+                end
+            end
+            UpdateSecondaryResource()
+        end
     elseif event == "UNIT_MAXPOWER" then
         -- Re-check secondary resource in case max changed (e.g. talent-based pip count)
         local newSec = GetSecondaryResource()

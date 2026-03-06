@@ -411,7 +411,7 @@ initFrame:SetScript("OnEvent", function(self)
     local BORDER_BACKDROP = { edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1 }
 
     -- Generic portrait image for NPC previews (player uses SetPortraitTexture)
-    local ENEMY_PORTRAIT_PATH = "Interface\\AddOns\\" .. ADDON_NAME .. "\\EllesmereUI\\media\\enemy-portrait.png"
+    local ENEMY_PORTRAIT_PATH = "Interface\\AddOns\\EllesmereUI\\media\\enemy-portrait.png"
 
     -- Portrait mask/border media paths (for detached portrait shape preview)
     local PORTRAIT_MEDIA_P = "Interface\\AddOns\\EllesmereUI\\media\\portraits\\"

@@ -53,10 +53,10 @@ local sin   = math.sin
 -------------------------------------------------------------------------------
 --  Constants
 -------------------------------------------------------------------------------
-local FONT_PATH   = "Interface\\AddOns\\" .. ADDON_NAME .. "\\EllesmereUI\\media\\fonts\\Expressway.TTF"
-local LOCK_INNER  = "Interface\\AddOns\\" .. ADDON_NAME .. "\\EllesmereUI\\media\\eui-unlocked-inner-2.png"
-local LOCK_OUTER  = "Interface\\AddOns\\" .. ADDON_NAME .. "\\EllesmereUI\\media\\eui-unlocked-outer-2.png"
-local LOCK_TOP    = "Interface\\AddOns\\" .. ADDON_NAME .. "\\EllesmereUI\\media\\eui-unlocked-top-2.png"
+local FONT_PATH   = "Interface\\AddOns\\EllesmereUI\\media\\fonts\\Expressway.TTF"
+local LOCK_INNER  = "Interface\\AddOns\\EllesmereUI\\media\\eui-unlocked-inner-2.png"
+local LOCK_OUTER  = "Interface\\AddOns\\EllesmereUI\\media\\eui-unlocked-outer-2.png"
+local LOCK_TOP    = "Interface\\AddOns\\EllesmereUI\\media\\eui-unlocked-top-2.png"
 local GRID_SPACING = 32          -- pixels between grid lines
 local SNAP_THRESH  = 6            -- px distance to trigger snap-to-element
 local MOVER_ALPHA  = 0.55        -- resting alpha for mover overlays
@@ -71,6 +71,22 @@ local BAR_LOOKUP    = ns.BAR_LOOKUP or {}
 local ALL_BAR_ORDER = ns.BAR_DROPDOWN_ORDER or {}
 local VISIBILITY_ONLY = ns.VISIBILITY_ONLY or {}
 
+local function GetVisibilityOnly()
+    -- Read lazily so child addons have time to populate ns.VISIBILITY_ONLY
+    return ns.VISIBILITY_ONLY or VISIBILITY_ONLY
+end
+
+-- Blizzard-owned frames we can move but cannot scale (SetScale causes taint)
+local NO_SCALE_BARS = {
+    MicroBar            = true,
+    BagBar              = true,
+    ExtraActionButton   = true,
+    EncounterBar        = true,
+}
+local function IsNoScaleBar(barKey)
+    local stripped = barKey:match("^EAB_(.+)$") or barKey
+    return NO_SCALE_BARS[stripped] == true
+end
 -- Local aliases for the shared registration tables
 local registeredElements = EllesmereUI._unlockRegisteredElements
 local registeredOrder    = EllesmereUI._unlockRegisteredOrder
@@ -1687,7 +1703,7 @@ local function CreateMover(barKey)
     --  Action toolbar: cog settings button only
     --  Cog is flush with mover's top-right corner.
     ---------------------------------------------------------------------------
-    local ICON_PATH = "Interface\\AddOns\\" .. ADDON_NAME .. "\\EllesmereUI\\media\\icons\\"
+    local ICON_PATH = "Interface\\AddOns\\EllesmereUI\\media\\icons\\"
     local ARROW_ICON  = ICON_PATH .. "eui-arrow.png"
     local ARROW_RIGHT_ICON = ICON_PATH .. "right-arrow.png"
     local COGS_ICON   = EllesmereUI.COGS_ICON or (ICON_PATH .. "cogs-3.png")
@@ -2120,8 +2136,7 @@ local function CreateMover(barKey)
 
             local sYOff = -4
             for _, bk in ipairs(ALL_BAR_ORDER) do
-                if bk ~= barKey and movers[bk] and movers[bk]:IsShown() and not VISIBILITY_ONLY[bk] then
-                    local lbl = GetBarLabel(bk)
+                if bk ~= barKey and movers[bk] and movers[bk]:IsShown() and not GetVisibilityOnly()[bk] then
                     local isSel = (curTarget == bk)
                     local sItem = CreateFrame("Button", nil, snapSubMenu)
                     sItem:SetHeight(ITEM_H)
@@ -2202,7 +2217,7 @@ local function CreateMover(barKey)
         end
         -- Add visibility-only bars (MicroBar, BagBar) to "Other" group
         for _, bk in ipairs(ALL_BAR_ORDER) do
-            if VISIBILITY_ONLY[bk] and bk ~= barKey and movers[bk] and movers[bk]:IsShown() then
+            if GetVisibilityOnly()[bk] and bk ~= barKey and movers[bk] and movers[bk]:IsShown() then
                 if not regGroups["Other"] then
                     regGroups["Other"] = {}
                     regGroupOrder[#regGroupOrder + 1] = "Other"
@@ -2381,19 +2396,22 @@ local function CreateMover(barKey)
 
     local function AnchorToolbarToMover()
         cogBtn:ClearAllPoints()
-        scaleBtn:ClearAllPoints()
         if IsNearScreenTop() then
             cogBtn:SetPoint("TOPRIGHT", mover, "BOTTOMRIGHT", 0, -2)
         else
             cogBtn:SetPoint("BOTTOMRIGHT", mover, "TOPRIGHT", 0, 2)
         end
-        scaleBtn:SetPoint("RIGHT", cogBtn, "LEFT", -ACT_PAD, 0)
+        -- Only position scaleBtn for bars that support scaling
+        if not IsNoScaleBar(barKey) then
+            scaleBtn:ClearAllPoints()
+            scaleBtn:SetPoint("RIGHT", cogBtn, "LEFT", -ACT_PAD, 0)
+        end
     end
     mover._anchorToolbar = AnchorToolbarToMover
     AnchorToolbarToMover()
 
     -- Hide orientation button for visibility-only bars or bars without layout support
-    local isVisOnly = (VISIBILITY_ONLY and VISIBILITY_ONLY[barKey]) or not (BAR_LOOKUP and BAR_LOOKUP[barKey])
+    local isVisOnly = (GetVisibilityOnly()[barKey]) or not (BAR_LOOKUP and BAR_LOOKUP[barKey])
 
     mover._cogBtn = cogBtn
     mover._actionBtns = { cogBtn, scaleBtn }  -- track + valBox added after creation below
@@ -2586,7 +2604,7 @@ local function CreateMover(barKey)
                 EllesmereUI.MakeBorder(cogSnapBarMenu, 1, 1, 1, 0.20)
                 local bYOff = -4
                 for _, bk in ipairs(ALL_BAR_ORDER) do
-                    if bk ~= barKey and movers[bk] and movers[bk]:IsShown() and not VISIBILITY_ONLY[bk] then
+                    if bk ~= barKey and movers[bk] and movers[bk]:IsShown() and not GetVisibilityOnly()[bk] then
                         local bLabel = GetBarLabel(bk)
                         local bSel = (curTgt == bk)
                         local bi = CreateFrame("Button", nil, cogSnapBarMenu)
@@ -2665,7 +2683,7 @@ local function CreateMover(barKey)
             end
             -- Add visibility-only bars (MicroBar, BagBar) to "Other" group
             for _, bk in ipairs(ALL_BAR_ORDER) do
-                if VISIBILITY_ONLY[bk] and bk ~= barKey and movers[bk] and movers[bk]:IsShown() then
+                if GetVisibilityOnly()[bk] and bk ~= barKey and movers[bk] and movers[bk]:IsShown() then
                     if not cogRegGroups["Other"] then
                         cogRegGroups["Other"] = {}
                         cogRegGroupOrder[#cogRegGroupOrder + 1] = "Other"
@@ -3310,9 +3328,12 @@ local function CreateMover(barKey)
 
     -- Hide scale button entirely for visibility-only Blizzard bars (MicroBar, BagBar)
     -- because SetScale on protected frames causes taint.
-    if VISIBILITY_ONLY[barKey] then
-        scaleBtn:Hide()
+    -- Hide scale button for Blizzard-owned frames that cannot be scaled without taint.
+    if IsNoScaleBar(barKey) then
+        scaleBtn:SetScript("OnHide", nil)
         scaleBtn:SetScript("OnClick", nil)
+        scaleBtn:ClearAllPoints()
+        scaleBtn:Hide()
         mover._actionBtns = { cogBtn }
     else
         mover._actionBtns = { scaleBtn, cogBtn }
@@ -3329,12 +3350,12 @@ end
 --  Grid + magnet toggle icons overlaid on top.
 --  Slides down from above screen during the SHACKLE animation phase.
 -------------------------------------------------------------------------------
-local GRID_ICON       = "Interface\\AddOns\\" .. ADDON_NAME .. "\\EllesmereUI\\media\\icons\\grid.png"
-local MAGNET_ICON     = "Interface\\AddOns\\" .. ADDON_NAME .. "\\EllesmereUI\\media\\icons\\magnet.png"
-local FLASHLIGHT_ICON = "Interface\\AddOns\\" .. ADDON_NAME .. "\\EllesmereUI\\media\\icons\\flashlight.png"
-local HOVER_ICON      = "Interface\\AddOns\\" .. ADDON_NAME .. "\\EllesmereUI\\media\\icons\\hover.png"
-local DARK_OVERLAY_ICON = "Interface\\AddOns\\" .. ADDON_NAME .. "\\EllesmereUI\\media\\icons\\dark-overlay.png"
-local BANNER_TEX      = "Interface\\AddOns\\" .. ADDON_NAME .. "\\EllesmereUI\\media\\eui-unlocked-banner-2.png"
+local GRID_ICON       = "Interface\\AddOns\\EllesmereUI\\media\\icons\\grid.png"
+local MAGNET_ICON     = "Interface\\AddOns\\EllesmereUI\\media\\icons\\magnet.png"
+local FLASHLIGHT_ICON = "Interface\\AddOns\\EllesmereUI\\media\\icons\\flashlight.png"
+local HOVER_ICON      = "Interface\\AddOns\\EllesmereUI\\media\\icons\\hover.png"
+local DARK_OVERLAY_ICON = "Interface\\AddOns\\EllesmereUI\\media\\icons\\dark-overlay.png"
+local BANNER_TEX      = "Interface\\AddOns\\EllesmereUI\\media\\eui-unlocked-banner-2.png"
 
 local HUD_ON_ALPHA  = 0.60
 local HUD_OFF_ALPHA = 0.30

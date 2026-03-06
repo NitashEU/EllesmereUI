@@ -37,7 +37,6 @@ local TBB_TEXTURES = {
 }
 local TBB_TEXTURE_ORDER = {
     "none", "beautiful", "plating",
-    "---",
     "atrocity", "divide", "glass",
     "gradient-lr", "gradient-rl", "gradient-bt", "gradient-tb",
     "matte", "sheer",

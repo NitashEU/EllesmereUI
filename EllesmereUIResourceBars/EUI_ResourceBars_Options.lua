@@ -89,6 +89,7 @@ initFrame:SetScript("OnEvent", function(self)
         local _, cf = UnitClass("player")
         local spec = GetSpecialization()
         if cf == "SHAMAN" and spec == 1 then return true end -- Elemental
+        if cf == "MONK" and spec == 1 then return true end -- Brewmaster
         if cf == "DEMONHUNTER" and spec then
             local specID = C_SpecializationInfo and C_SpecializationInfo.GetSpecializationInfo(spec)
             if specID == 1480 then return true end -- Devourer

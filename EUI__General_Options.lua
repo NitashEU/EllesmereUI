@@ -479,13 +479,15 @@ initFrame:SetScript("OnEvent", function(self)
         end
     end
 
-    -- Apply on login if saved (default: ON when nil)
-    if not EllesmereUIDB or EllesmereUIDB.errorGrabber ~= false then
+    -- Apply on login if saved (default: OFF when nil)
+    if EllesmereUIDB and EllesmereUIDB.errorGrabber == true then
         EnableErrorGrabber()
     end
-    -- Apply suppress on login if saved (when error grabber is OFF)
-    if EllesmereUIDB and EllesmereUIDB.errorGrabber == false and EllesmereUIDB.suppressErrors then
-        SetCVarSafe("scriptErrors", "0")
+    -- Apply suppress on login (default: ON when nil or errorGrabber is off)
+    if not EllesmereUIDB or EllesmereUIDB.errorGrabber ~= true then
+        if not EllesmereUIDB or EllesmereUIDB.suppressErrors ~= false then
+            SetCVarSafe("scriptErrors", "0")
+        end
     end
 
     -- Expose for toggle
@@ -1443,7 +1445,7 @@ initFrame:SetScript("OnEvent", function(self)
                 SetCVarSafe("floatingCombatTextCombatHealing_v2", v and "1" or "0")
               end });  y = y - h
 
-        local FCT_FONT_DIR = "Interface\\AddOns\\" .. ADDON_NAME .. "\\EllesmereUI\\media\\fonts\\"
+        local FCT_FONT_DIR = "Interface\\AddOns\\EllesmereUI\\media\\fonts\\"
         local fctFontValues = {
             ["default"]                                = { text = "Blizzard Default", font = "Fonts\\FRIZQT__.TTF" },
             [FCT_FONT_DIR .. "Expressway.TTF"]         = { text = "Expressway",           font = FCT_FONT_DIR .. "Expressway.TTF" },
@@ -1587,7 +1589,7 @@ initFrame:SetScript("OnEvent", function(self)
         _, h = W:DualRow(parent, y,
             { type="toggle", text="Show Lua Errors In Chat",
               getValue=function()
-                return not (EllesmereUIDB and EllesmereUIDB.errorGrabber == false)
+                return EllesmereUIDB and EllesmereUIDB.errorGrabber == true
               end,
               setValue=function(v)
                 if not EllesmereUIDB then EllesmereUIDB = {} end
@@ -1604,7 +1606,7 @@ initFrame:SetScript("OnEvent", function(self)
               end },
             { type="toggle", text="Play Sound on Lua Error",
               disabled=function()
-                return EllesmereUIDB and EllesmereUIDB.errorGrabber == false
+                return not (EllesmereUIDB and EllesmereUIDB.errorGrabber == true)
               end,
               disabledTooltip="Show Lua Errors In Chat",
               getValue=function()
@@ -1618,11 +1620,11 @@ initFrame:SetScript("OnEvent", function(self)
         _, h = W:DualRow(parent, y,
             { type="toggle", text="Suppress Lua Errors",
               disabled=function()
-                return not (EllesmereUIDB and EllesmereUIDB.errorGrabber == false)
+                return EllesmereUIDB and EllesmereUIDB.errorGrabber == true
               end,
               disabledTooltip="Show Lua Errors In Chat",
               getValue=function()
-                return EllesmereUIDB and EllesmereUIDB.suppressErrors or false
+                return not (EllesmereUIDB and EllesmereUIDB.suppressErrors == false)
               end,
               setValue=function(v)
                 if not EllesmereUIDB then EllesmereUIDB = {} end
@@ -3083,6 +3085,11 @@ initFrame:SetScript("OnEvent", function(self)
                 EllesmereUIDB.guildChatPrivacy = false
                 EllesmereUIDB.repairWarning = nil
                 EllesmereUIDB.disabledAddons = nil
+                -- Developer settings defaults
+                EllesmereUIDB.errorGrabber = false
+                EllesmereUIDB.errorSound = false
+                EllesmereUIDB.showSpellID = false
+                EllesmereUIDB.suppressErrors = true
             end
             if EllesmereUI._applyRightClickTarget then
                 EllesmereUI._applyRightClickTarget()
@@ -3096,6 +3103,11 @@ initFrame:SetScript("OnEvent", function(self)
             if EllesmereUI._applyGuildChatPrivacy then
                 EllesmereUI._applyGuildChatPrivacy()
             end
+            -- Apply error grabber defaults (off) and suppress (on)
+            if EllesmereUI._disableErrorGrabber then
+                EllesmereUI._disableErrorGrabber()
+            end
+            SetCVarSafe("scriptErrors", "0")
             EllesmereUI:SelectPage(PAGE_GENERAL)
         end,
     })

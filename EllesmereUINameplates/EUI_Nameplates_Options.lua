@@ -473,7 +473,7 @@ initFrame:SetScript("OnEvent", function(self)
         hpNumber:Hide()
 
         -- Raid marker: custom marker.png image, position/size from settings
-        local MARKER_PATH = "Interface\\AddOns\\" .. ADDON_NAME .. "\\EllesmereUI\\media\\marker.png"
+        local MARKER_PATH = "Interface\\AddOns\\EllesmereUI\\media\\marker.png"
         local raidFrame = CreateFrame("Frame", nil, health)
         raidFrame:SetFrameLevel(health:GetFrameLevel() + 6)
         local raidIcon = raidFrame:CreateTexture(nil, "ARTWORK")
@@ -558,7 +558,7 @@ initFrame:SetScript("OnEvent", function(self)
         local CP = {
             PIP_W = 8, PIP_H = 3, PIP_GAP = 2,
             EMPTY_R = 0.35, EMPTY_G = 0.35, EMPTY_B = 0.35, EMPTY_A = 0.85,
-            MAX_POSSIBLE = 7,
+            MAX_POSSIBLE = 10,
             FILL_FRAC = 0.70,
             DEFAULT_COLOR = { 1.00, 0.84, 0.30 },
             CLASS_COLORS = {
@@ -578,7 +578,8 @@ initFrame:SetScript("OnEvent", function(self)
                 ROGUE   = { Enum.PowerType.ComboPoints,   5 },
                 DRUID   = { Enum.PowerType.ComboPoints,   5 },
                 PALADIN = { Enum.PowerType.HolyPower,     5 },
-                MONK    = { Enum.PowerType.Chi,            5 },
+                MONK    = { [268] = { "BREWMASTER_STAGGER", 1 },
+                            [269] = { Enum.PowerType.Chi, 5 } },
                 WARLOCK = { Enum.PowerType.SoulShards,     5 },
                 MAGE    = { Enum.PowerType.ArcaneCharges,  4 },
                 EVOKER  = { Enum.PowerType.Essence,        5 },
@@ -590,12 +591,24 @@ initFrame:SetScript("OnEvent", function(self)
         }
         CP.pips = {}
         for i = 1, CP.MAX_POSSIBLE do
+            local bg = pf:CreateTexture(nil, "OVERLAY", nil, 2)
+            bg:SetColorTexture(0.082, 0.082, 0.082, 1)
+            bg:Hide()
             local pip = pf:CreateTexture(nil, "OVERLAY", nil, 3)
             pip:SetColorTexture(1, 1, 1, 1)
             pip:SetSize(CP.PIP_W, CP.PIP_H)
             pip:Hide()
+            pip._bg = bg
             CP.pips[i] = pip
         end
+        -- Bar-type class resource (e.g. stagger) preview
+        CP.bar = CreateFrame("StatusBar", nil, pf)
+        CP.bar:SetStatusBarTexture("Interface\\Buttons\\WHITE8X8")
+        CP.bar:SetFrameLevel(pf:GetFrameLevel() + 5)
+        CP.bar:Hide()
+        CP.bar._bg = CP.bar:CreateTexture(nil, "BACKGROUND")
+        CP.bar._bg:SetAllPoints()
+        CP.bar._bg:SetColorTexture(0.082, 0.082, 0.082, 1)
 
         -- Debuffs: 2 icons centered above name
         local debuffs = {}
@@ -1343,6 +1356,8 @@ initFrame:SetScript("OnEvent", function(self)
             -- Class power pips (preview uses live class/spec resource count, ~70% filled)
             local showCP = DBVal("showClassPower") == true
             local cpExtraH = 0
+            local cpIsBarType = false
+            local cpResourceName = nil
             if showCP then
                 -- Determine pip count from player's class, using live UnitPowerMax when available
                 local _, playerClass = UnitClass("player")
@@ -1356,9 +1371,12 @@ initFrame:SetScript("OnEvent", function(self)
                         cpInfo = specID and cpInfo[specID]
                     end
                     if cpInfo then
+                        cpResourceName = type(cpInfo[1]) == "string" and cpInfo[1] or nil
                         if type(cpInfo[1]) == "string" then
-                            -- Custom resource: use EllesmereUI helpers for max
-                            if cpInfo[1] == "SOUL_FRAGMENTS_VENGEANCE" then
+                            if cpInfo[1] == "BREWMASTER_STAGGER" then
+                                cpIsBarType = true
+                                cpMax = 1
+                            elseif cpInfo[1] == "SOUL_FRAGMENTS_VENGEANCE" then
                                 cpMax = 6
                             elseif cpInfo[1] == "MAELSTROM_WEAPON" and EllesmereUI and EllesmereUI.GetMaelstromWeapon then
                                 local _, mMax = EllesmereUI.GetMaelstromWeapon()
@@ -1387,11 +1405,59 @@ initFrame:SetScript("OnEvent", function(self)
                     cpColor = { cc.r, cc.g, cc.b }
                 end
 
-                if cpMax <= 0 then
-                    for i = 1, CP.MAX_POSSIBLE do CP.pips[i]:Hide() end
-                else
+                local cpBgCol = (DB() and DB().classPowerBgColor) or defaults.classPowerBgColor
+
+                if cpIsBarType then
+                    -- Bar-type preview (stagger): single StatusBar
+                    for i = 1, CP.MAX_POSSIBLE do
+                        CP.pips[i]:Hide()
+                        if CP.pips[i]._bg then CP.pips[i]._bg:Hide() end
+                    end
                     local cpScale = DBVal("classPowerScale") or defaults.classPowerScale
                     local cpYOff  = DBVal("classPowerYOffset") or defaults.classPowerYOffset
+                    local cpXOff  = DBVal("classPowerXOffset") or defaults.classPowerXOffset
+                    local cpPos   = DBVal("classPowerPos") or defaults.classPowerPos
+                    local scaledH = Snap(CP.PIP_H * cpScale)
+                    local barW    = Snap(CP.PIP_W * cpScale * 6)
+
+                    local anchorPoint, anchorRelPoint, anchorFrame, yDir
+                    if cpPos == "top" then
+                        anchorPoint    = "BOTTOM"
+                        anchorRelPoint = "TOP"
+                        anchorFrame    = health
+                        yDir = 1
+                    else
+                        anchorPoint    = "TOP"
+                        anchorRelPoint = "BOTTOM"
+                        anchorFrame    = cast
+                        yDir = -1
+                    end
+
+                    local bar = CP.bar
+                    bar:ClearAllPoints()
+                    bar:SetSize(barW, scaledH)
+                    bar:SetPoint(anchorPoint, anchorFrame, anchorRelPoint,
+                        Snap(cpXOff), Snap(yDir * cpYOff))
+                    bar:SetMinMaxValues(0, 100)
+                    bar:SetValue(45)  -- preview at 45% (moderate stagger)
+                    bar:SetStatusBarColor(1.0, 0.85, 0.2, 1)  -- yellow for preview
+                    bar._bg:SetColorTexture(cpBgCol.r, cpBgCol.g, cpBgCol.b, cpBgCol.a)
+                    bar:Show()
+
+                    if cpPos ~= "top" then
+                        cpExtraH = cpYOff + scaledH
+                    end
+                elseif cpMax <= 0 then
+                    for i = 1, CP.MAX_POSSIBLE do
+                        CP.pips[i]:Hide()
+                        if CP.pips[i]._bg then CP.pips[i]._bg:Hide() end
+                    end
+                    CP.bar:Hide()
+                else
+                    CP.bar:Hide()
+                    local cpScale = DBVal("classPowerScale") or defaults.classPowerScale
+                    local cpYOff  = DBVal("classPowerYOffset") or defaults.classPowerYOffset
+                    local cpXOff  = DBVal("classPowerXOffset") or defaults.classPowerXOffset
                     local cpPos   = DBVal("classPowerPos") or defaults.classPowerPos
                     local cpGap   = DBVal("classPowerGap") or defaults.classPowerGap
                     local scaledW   = Snap(CP.PIP_W * cpScale)
@@ -1423,7 +1489,17 @@ initFrame:SetScript("OnEvent", function(self)
                             pip:ClearAllPoints()
                             pip:SetSize(scaledW, scaledH)
                             pip:SetPoint(anchorPoint, anchorFrame, anchorRelPoint,
-                                Snap(startX + (i - 1) * (scaledW + scaledGap)), Snap(yDir * cpYOff))
+                                Snap(startX + (i - 1) * (scaledW + scaledGap) + cpXOff), Snap(yDir * cpYOff))
+
+                            -- Background behind each pip
+                            local bg = pip._bg
+                            if bg then
+                                bg:ClearAllPoints()
+                                bg:SetAllPoints(pip)
+                                bg:SetColorTexture(cpBgCol.r, cpBgCol.g, cpBgCol.b, cpBgCol.a)
+                                bg:Show()
+                            end
+
                             if i <= cpCur then
                                 pip:SetColorTexture(cpColor[1], cpColor[2], cpColor[3], 1)
                             else
@@ -1433,6 +1509,7 @@ initFrame:SetScript("OnEvent", function(self)
                             pip:Show()
                         else
                             pip:Hide()
+                            if pip._bg then pip._bg:Hide() end
                         end
                     end
                     -- Extra height only when pips are below the cast bar
@@ -1441,7 +1518,11 @@ initFrame:SetScript("OnEvent", function(self)
                     end
                 end
             else
-                for i = 1, CP.MAX_POSSIBLE do CP.pips[i]:Hide() end
+                for i = 1, CP.MAX_POSSIBLE do
+                    CP.pips[i]:Hide()
+                    if CP.pips[i]._bg then CP.pips[i]._bg:Hide() end
+                end
+                CP.bar:Hide()
             end
 
             local totalH = Snap(healthFromTop + barH + castH + cpExtraH + 15)
@@ -1506,6 +1587,7 @@ initFrame:SetScript("OnEvent", function(self)
         pf._health       = health
         pf._healthWrapper = healthWrapper
         pf._cpPips       = CP.pips
+        pf._cpBar        = CP.bar
         pf._cpMax        = CP.MAX_POSSIBLE
         pf._arrows       = arrows
 
@@ -3981,7 +4063,7 @@ initFrame:SetScript("OnEvent", function(self)
                 ns.ApplyClassPowerSetting(); UpdatePreview()
                 EllesmereUI:RefreshPage()
               end },
-            { type="toggle", text="Class Colors",
+            { type="toggle", text="Class Colored",
               disabled=classPowerDisabled,
               disabledTooltip="Show Class Resource",
               getValue=function()
@@ -4018,62 +4100,27 @@ initFrame:SetScript("OnEvent", function(self)
                 if v == nil then return defaults.classPowerClassColors end
                 return v
             end
+
+            -- Blocking overlay for disabled state
+            local cpBlock = CreateFrame("Frame", nil, cpSwatch)
+            cpBlock:SetAllPoints()
+            cpBlock:SetFrameLevel(cpSwatch:GetFrameLevel() + 10)
+            cpBlock:EnableMouse(true)
+            cpBlock:SetScript("OnEnter", function()
+                local reason = classPowerDisabled() and "Show Class Resource" or "Class Colored"
+                EllesmereUI.ShowWidgetTooltip(cpSwatch, EllesmereUI.DisabledTooltip(reason))
+            end)
+            cpBlock:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
+
             EllesmereUI.RegisterWidgetRefresh(function()
                 local off = cpSwatchDisabled()
-                cpSwatch:SetAlpha(off and 0.15 or 1)
-                cpSwatch:EnableMouse(not off)
+                cpSwatch:SetAlpha(off and 0.3 or 1)
+                if off then cpBlock:Show() else cpBlock:Hide() end
                 cpUpdateSwatch()
             end)
             local cpSwatchOff = cpSwatchDisabled()
-            cpSwatch:SetAlpha(cpSwatchOff and 0.15 or 1)
-            cpSwatch:EnableMouse(not cpSwatchOff)
-
-            -- Disabled tooltip on swatch
-            cpSwatch:HookScript("OnEnter", function(self)
-                if cpSwatchDisabled() then
-                    local reason = classPowerDisabled() and "Show Class Resource" or "Class Colors"
-                    EllesmereUI.ShowWidgetTooltip(self, EllesmereUI.DisabledTooltip(reason))
-                end
-            end)
-            cpSwatch:HookScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
-        end
-
-        -- Inline "Empty Bar Color" swatch on Class Colors row (next to custom color swatch)
-        do
-            local rightRgn = classResourceToggleRow._rightRegion
-            local emptyColorGet = function()
-                local c = (DB() and DB().classPowerEmptyColor) or defaults.classPowerEmptyColor
-                return c.r, c.g, c.b, c.a
-            end
-            local emptyColorSet = function(r, g, b, a)
-                DB().classPowerEmptyColor = { r = r, g = g, b = b, a = a }
-                ns.RefreshClassPower(); UpdatePreview()
-            end
-            local emptySwatch, emptyUpdateSwatch = EllesmereUI.BuildColorSwatch(rightRgn, rightRgn:GetFrameLevel() + 5, emptyColorGet, emptyColorSet, true, 20)
-            PP.Point(emptySwatch, "RIGHT", rightRgn._lastInline or rightRgn._control, "LEFT", -6, 0)
-            rightRgn._lastInline = emptySwatch
-
-            local function emptySwatchDisabled()
-                return classPowerDisabled()
-            end
-            EllesmereUI.RegisterWidgetRefresh(function()
-                local off = emptySwatchDisabled()
-                emptySwatch:SetAlpha(off and 0.15 or 1)
-                emptySwatch:EnableMouse(not off)
-                emptyUpdateSwatch()
-            end)
-            local emptyOff = emptySwatchDisabled()
-            emptySwatch:SetAlpha(emptyOff and 0.15 or 1)
-            emptySwatch:EnableMouse(not emptyOff)
-
-            emptySwatch:HookScript("OnEnter", function(self)
-                if emptySwatchDisabled() then
-                    EllesmereUI.ShowWidgetTooltip(self, EllesmereUI.DisabledTooltip("Show Class Resource"))
-                else
-                    EllesmereUI.ShowWidgetTooltip(self, "Empty Bar Color")
-                end
-            end)
-            emptySwatch:HookScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
+            cpSwatch:SetAlpha(cpSwatchOff and 0.3 or 1)
+            if cpSwatchOff then cpBlock:Show() else cpBlock:Hide() end
         end
 
         -- Row 2: Position (with inline cog for X/Y) | Size
@@ -4831,10 +4878,14 @@ initFrame:SetScript("OnEvent", function(self)
                         lastVis = pv._cpPips[i]
                     end
                 end
-                if firstVis and lastVis then
+                -- Bar-type resource: use the bar frame as anchor
+                local useBar = (not firstVis) and pv._cpBar and pv._cpBar:IsShown()
+                local anchorFirst = firstVis or (useBar and pv._cpBar)
+                local anchorLast  = lastVis  or (useBar and pv._cpBar)
+                if anchorFirst and anchorLast then
                     local cpBtn = CreateFrame("Button", nil, pv)
-                    cpBtn:SetPoint("TOPLEFT", firstVis, "TOPLEFT", -2, 2)
-                    cpBtn:SetPoint("BOTTOMRIGHT", lastVis, "BOTTOMRIGHT", 2, -2)
+                    cpBtn:SetPoint("TOPLEFT", anchorFirst, "TOPLEFT", -2, 2)
+                    cpBtn:SetPoint("BOTTOMRIGHT", anchorLast, "BOTTOMRIGHT", 2, -2)
                     cpBtn:SetFrameLevel((pv._health and pv._health:GetFrameLevel() or 20) + 15)
                     cpBtn:RegisterForClicks("LeftButtonDown")
                     local cc = EllesmereUI.ELLESMERE_GREEN

@@ -1971,6 +1971,20 @@ local function AttachHoverHooks(barKey)
         state.isHovered = false
         C_Timer_After(0.1, function()
             if state.isHovered then return end
+            -- Keep bar visible while a spell flyout spawned from this bar is open
+            if SpellFlyout and SpellFlyout:IsShown() and SpellFlyout:IsMouseOver() then return end
+            local s = EAB.db.profile.bars[barKey]
+            if s and s.mouseoverEnabled and state.fadeDir ~= "out" then
+                state.fadeDir = "out"
+                FadeTo(frame, 0, s.mouseoverSpeed or 0.15)
+            end
+        end)
+    end
+
+    -- When the flyout closes, re-evaluate whether the bar should fade out
+    if SpellFlyout then
+        SpellFlyout:HookScript("OnHide", function()
+            if state.isHovered then return end
             local s = EAB.db.profile.bars[barKey]
             if s and s.mouseoverEnabled and state.fadeDir ~= "out" then
                 state.fadeDir = "out"
@@ -3511,6 +3525,21 @@ function EAB:FinishSetup()
         AttachHoverHooks(info.key)
     end
 
+    -- When a spell flyout closes, fade out any bars that were kept visible by it
+    if SpellFlyout then
+        SpellFlyout:HookScript("OnHide", function()
+            for key, state in pairs(hoverStates) do
+                if not state.isHovered then
+                    local s = EAB.db.profile.bars[key]
+                    if s and s.mouseoverEnabled and state.fadeDir ~= "out" then
+                        state.fadeDir = "out"
+                        FadeTo(state.frame, 0, s.mouseoverSpeed or 0.15)
+                    end
+                end
+            end
+        end)
+    end
+
     -- Register events
     local _bindDeferFrame
     self:RegisterEvent("UPDATE_BINDINGS", function()
@@ -4681,43 +4710,68 @@ local function SetupExtraBars()
 
     for _, info in ipairs(EXTRA_BARS) do
         if not info.isDataBar and not info.isBlizzardMovable then
-            local frame = _G[info.frameName]
-            if frame then
+            local blizzFrame = _G[info.frameName]
+            if blizzFrame then
                 local s = EAB.db.profile.bars[info.key]
                 if s then
+                    local holder = extraBarHolders[info.key]
                     if s.alwaysHidden then
-                        frame:Hide()
-                        local holder = extraBarHolders[info.key]
+                        blizzFrame:Hide()
                         if holder then holder:Hide() end
                     end
                     if s.mouseoverEnabled then
-                        local hoverFrame = info.hoverFrame and _G[info.hoverFrame] or frame
+                        -- Fade the holder frame (our own, non-protected frame)
+                        -- so we never call SetAlpha on a protected Blizzard frame
+                        local fadeTarget = holder or blizzFrame
                         local state = { isHovered = false, fadeDir = nil }
+                        hoverStates[info.key] = state
+
                         local function OnEnter()
                             state.isHovered = true
-                            if state.fadeDir ~= "in" then
+                            local bs = EAB.db.profile.bars[info.key]
+                            if bs and bs.mouseoverEnabled and state.fadeDir ~= "in" then
                                 state.fadeDir = "in"
-                                StopFade(frame)
-                                FadeTo(frame, 1, s.mouseoverSpeed or 0.15)
+                                StopFade(fadeTarget)
+                                FadeTo(fadeTarget, 1, bs.mouseoverSpeed or 0.15)
                             end
                         end
                         local function OnLeave()
                             state.isHovered = false
                             C_Timer_After(0.1, function()
                                 if state.isHovered then return end
-                                if state.fadeDir ~= "out" then
+                                local bs = EAB.db.profile.bars[info.key]
+                                if bs and bs.mouseoverEnabled and state.fadeDir ~= "out" then
                                     state.fadeDir = "out"
-                                    FadeTo(frame, 0, s.mouseoverSpeed or 0.15)
+                                    FadeTo(fadeTarget, 0, bs.mouseoverSpeed or 0.15)
                                 end
                             end)
                         end
-                        frame:HookScript("OnEnter", OnEnter)
-                        frame:HookScript("OnLeave", OnLeave)
-                        if hoverFrame ~= frame then
+
+                        -- Hook the Blizzard container and optional hover frame
+                        blizzFrame:HookScript("OnEnter", OnEnter)
+                        blizzFrame:HookScript("OnLeave", OnLeave)
+                        local hoverFrame = info.hoverFrame and _G[info.hoverFrame]
+                        if hoverFrame and hoverFrame ~= blizzFrame then
                             hoverFrame:HookScript("OnEnter", OnEnter)
                             hoverFrame:HookScript("OnLeave", OnLeave)
                         end
-                        frame:SetAlpha(0)
+
+                        -- Hook all child buttons so hovering individual micro
+                        -- menu buttons or bag slots triggers the fade
+                        local function HookChildren(parent)
+                            for _, child in ipairs({ parent:GetChildren() }) do
+                                if child:IsObjectType("Button") or child:IsObjectType("CheckButton") or child:IsObjectType("ItemButton") then
+                                    child:HookScript("OnEnter", OnEnter)
+                                    child:HookScript("OnLeave", OnLeave)
+                                end
+                            end
+                        end
+                        HookChildren(blizzFrame)
+                        if hoverFrame and hoverFrame ~= blizzFrame then
+                            HookChildren(hoverFrame)
+                        end
+
+                        fadeTarget:SetAlpha(0)
                     end
                 end
             end

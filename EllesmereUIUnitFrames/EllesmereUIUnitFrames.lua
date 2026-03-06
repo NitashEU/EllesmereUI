@@ -577,7 +577,6 @@ local healthBarTextures = {
 }
 local healthBarTextureOrder = {
     "none", "beautiful", "plating",
-    "---",
     "atrocity", "divide", "glass",
     "gradient-lr", "gradient-rl", "gradient-bt", "gradient-tb",
     "matte", "sheer",
@@ -3383,10 +3382,10 @@ end
 local CLASS_POWER_TYPES = {
     ROGUE       = Enum.PowerType.ComboPoints,
     DRUID       = Enum.PowerType.ComboPoints,
-    MAGE        = Enum.PowerType.ArcaneCharges,
+    MAGE        = { [62]  = { Enum.PowerType.ArcaneCharges, 4 } }, -- Arcane only
     WARLOCK     = Enum.PowerType.SoulShards,
     PALADIN     = Enum.PowerType.HolyPower,
-    MONK        = Enum.PowerType.Chi,
+    MONK        = { [269] = { Enum.PowerType.Chi, 5 } },
     EVOKER      = Enum.PowerType.Essence,
     DEATHKNIGHT = Enum.PowerType.Runes,
     -- Spec-specific custom resources (resolved at creation time)
@@ -3423,9 +3422,20 @@ local function CreateCustomClassPower(playerFrame, style)
         local specID = spec and C_SpecializationInfo.GetSpecializationInfo(spec)
         local specEntry = specID and entry[specID]
         if not specEntry then return nil end
-        powerType = specEntry[1]  -- string key like "SOUL_FRAGMENTS_VENGEANCE"
-        customMax = specEntry[2]
-        isCustom = true
+        if type(specEntry) == "table" and type(specEntry[1]) == "string" then
+            -- String-keyed custom resource (e.g. "SOUL_FRAGMENTS_VENGEANCE")
+            powerType = specEntry[1]
+            customMax = specEntry[2]
+            isCustom = true
+        elseif type(specEntry) == "table" then
+            -- Numeric powerType wrapped in a spec table (e.g. Chi for Windwalker)
+            powerType = specEntry[1]
+            customMax = specEntry[2]
+            isCustom = false
+        else
+            powerType = specEntry
+            isCustom = false
+        end
     else
         powerType = entry
         isCustom = false

@@ -20,7 +20,7 @@ if _G._EllesmereUIPartyModeLoaded then return end
 _G._EllesmereUIPartyModeLoaded = true
 
 local ADDON_NAME = ...
-local GRADIENT_TEX = "Interface\\AddOns\\" .. ADDON_NAME .. "\\EllesmereUI\\media\\party.png"
+local GRADIENT_TEX = "Interface\\AddOns\\EllesmereUI\\media\\party.png"
 
 local BASE_OVERLAY_ALPHA = 0.30
 local function OVERLAY_ALPHA()

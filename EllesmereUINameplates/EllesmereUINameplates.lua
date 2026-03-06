@@ -196,7 +196,6 @@ do
     }
     ns.healthBarTextureOrder = {
         "none", "beautiful", "plating",
-        "---",
         "atrocity", "divide", "glass",
         "gradient-lr", "gradient-rl", "gradient-bt", "gradient-tb",
         "matte", "sheer",
@@ -1869,7 +1868,8 @@ local CLASS_POWER_MAP = {
     ROGUE       = { Enum.PowerType.ComboPoints, 5 },
     DRUID       = { Enum.PowerType.ComboPoints, 5 },
     PALADIN     = { Enum.PowerType.HolyPower,   5 },
-    MONK        = { Enum.PowerType.Chi,          5 },
+    MONK        = { [268] = { "BREWMASTER_STAGGER", 1 },
+                    [269] = { Enum.PowerType.Chi, 5 } },
     WARLOCK     = { Enum.PowerType.SoulShards,   5 },
     MAGE        = { Enum.PowerType.ArcaneCharges, 4 },
     EVOKER      = { Enum.PowerType.Essence,      5 },
@@ -1885,58 +1885,50 @@ local function EnsureClassPowerPips(plate)
     plate._cpPips = {}
     local maxPossible = 10  -- safe upper bound (Maelstrom Weapon = 10)
     for i = 1, maxPossible do
+        local bg = plate:CreateTexture(nil, "OVERLAY", nil, 2)
+        bg:SetColorTexture(0.082, 0.082, 0.082, 1)
+        bg:Hide()
         local pip = plate:CreateTexture(nil, "OVERLAY", nil, 3)
         pip:SetColorTexture(1, 1, 1, 1)
         PP.Size(pip, CP_PIP_W, CP_PIP_H)
         pip:Hide()
+        pip._bg = bg
         plate._cpPips[i] = pip
     end
+end
+
+-- Lazy-create a single StatusBar for bar-type class resources (e.g. stagger)
+local function EnsureClassPowerBar(plate)
+    if plate._cpBar then return end
+    local bar = CreateFrame("StatusBar", nil, plate)
+    bar:SetStatusBarTexture("Interface\\Buttons\\WHITE8X8")
+    bar:SetFrameLevel(plate:GetFrameLevel() + 5)
+    bar:Hide()
+    -- Background texture behind the bar
+    local bg = bar:CreateTexture(nil, "BACKGROUND")
+    bg:SetAllPoints()
+    bg:SetColorTexture(0.082, 0.082, 0.082, 1)
+    bar._bg = bg
+    plate._cpBar = bar
 end
 
 -- Update pip display on a plate (or hide if plate is nil)
 local function UpdateClassPowerOnPlate(plate)
     if not plate or not plate._cpPips then return end
     if not classPowerType then
-        for i = 1, #plate._cpPips do plate._cpPips[i]:Hide() end
-        return
-    end
-    local cur, maxP
-    local isSecret = false
-    if classPowerType == "SOUL_FRAGMENTS_VENGEANCE" then
-        -- Vengeance DH: GetSpellCastCount returns a SECRET value in 12.0+.
-        -- We pass it to StatusBar overlays on each pip (same as resource bars).
-        cur = C_Spell and C_Spell.GetSpellCastCount and C_Spell.GetSpellCastCount(228477) or 0
-        maxP = 6
-        isSecret = true
-    elseif classPowerType == "MAELSTROM_WEAPON" then
-        cur, maxP = EllesmereUI.GetMaelstromWeapon()
-    elseif classPowerType == "TIP_OF_THE_SPEAR" then
-        cur, maxP = EllesmereUI.GetTipOfTheSpear()
-    elseif classPowerType == "WHIRLWIND_STACKS" then
-        cur, maxP = EllesmereUI.GetWhirlwindStacks()
-        if not maxP or maxP <= 0 then
-            -- Talent not known: hide pips
-            for i = 1, #plate._cpPips do plate._cpPips[i]:Hide() end
-            return
+        for i = 1, #plate._cpPips do
+            plate._cpPips[i]:Hide()
+            if plate._cpPips[i]._bg then plate._cpPips[i]._bg:Hide() end
         end
-    else
-        cur = UnitPower("player", classPowerType) or 0
-        maxP = UnitPowerMax("player", classPowerType) or classPowerMax
-        if maxP <= 0 then maxP = classPowerMax end
-    end
-    if maxP <= 0 then
-        for i = 1, #plate._cpPips do plate._cpPips[i]:Hide() end
+        if plate._cpBar then plate._cpBar:Hide() end
         return
     end
+
     local cpScale = GetClassPowerScale()
     local cpYOff = GetClassPowerYOffset()
     local cpXOff = GetClassPowerXOffset()
     local cpPos = GetClassPowerPos()
-    local scaledW = CP_PIP_W * cpScale
-    local scaledH = CP_PIP_H * cpScale
-    local scaledGap = GetClassPowerGap() * cpScale
-    local totalW = maxP * scaledW + (maxP - 1) * scaledGap
-    local startX = -totalW / 2 + scaledW / 2
+    local bgCol = GetClassPowerBgColor()
 
     -- Determine anchor: top or bottom of health bar, with cast bar avoidance
     local anchorPoint, anchorRelPoint, anchorFrame, yDir
@@ -1946,7 +1938,6 @@ local function UpdateClassPowerOnPlate(plate)
         anchorFrame = plate.health
         yDir = 1
     else
-        -- Bottom position: attach below cast bar if casting, else below health bar
         if plate.isCasting and plate.cast:IsShown() then
             anchorPoint = "TOP"
             anchorRelPoint = "BOTTOM"
@@ -1960,6 +1951,98 @@ local function UpdateClassPowerOnPlate(plate)
         end
     end
 
+    -- Bar-type resource (Brewmaster Stagger): single StatusBar instead of pips
+    if classPowerType == "BREWMASTER_STAGGER" then
+        -- Hide all pips
+        for i = 1, #plate._cpPips do
+            plate._cpPips[i]:Hide()
+            if plate._cpPips[i]._bg then plate._cpPips[i]._bg:Hide() end
+            if plate._cpPips[i]._secretBar then plate._cpPips[i]._secretBar:Hide() end
+        end
+        EnsureClassPowerBar(plate)
+        local bar = plate._cpBar
+        local staggerCur = UnitStagger("player")
+        local staggerMax = UnitHealthMax("player")
+        local isSecretVal = issecretvalue and (issecretvalue(staggerCur) or issecretvalue(staggerMax))
+        if not staggerCur then staggerCur = 0 end
+        if not staggerMax or staggerMax <= 0 then staggerMax = 1 end
+
+        local scaledW = CP_PIP_W * cpScale * 6  -- bar width: ~6 pips wide
+        local scaledH = CP_PIP_H * cpScale
+        bar:ClearAllPoints()
+        bar:SetSize(scaledW, scaledH)
+        bar:SetPoint(anchorPoint, anchorFrame, anchorRelPoint,
+            cpXOff, yDir * cpYOff)
+        bar:SetMinMaxValues(0, staggerMax)
+        bar:SetValue(staggerCur)
+
+        -- Stagger color thresholds: green < 30%, yellow 30-60%, red > 60%
+        if isSecretVal then
+            -- Secret value: can't compare, use class color
+            local _, pClass = UnitClass("player")
+            local cpColor = CP_CLASS_COLORS[pClass] or CP_DEFAULT_COLOR
+            if not GetClassPowerClassColors() then
+                local cc = GetClassPowerCustomColor()
+                cpColor = { cc.r, cc.g, cc.b }
+            end
+            bar:SetStatusBarColor(cpColor[1], cpColor[2], cpColor[3], 1)
+        else
+            local pct = staggerCur / staggerMax
+            if pct >= 0.6 then
+                bar:SetStatusBarColor(1.0, 0.2, 0.2, 1)   -- red (heavy)
+            elseif pct >= 0.3 then
+                bar:SetStatusBarColor(1.0, 0.85, 0.2, 1)  -- yellow (moderate)
+            else
+                bar:SetStatusBarColor(0.2, 0.8, 0.2, 1)   -- green (light)
+            end
+        end
+
+        bar._bg:SetColorTexture(bgCol.r, bgCol.g, bgCol.b, bgCol.a)
+        bar:Show()
+        return
+    end
+
+    -- Hide bar if switching from bar-type to pip-type
+    if plate._cpBar then plate._cpBar:Hide() end
+
+    local cur, maxP
+    local isSecret = false
+    if classPowerType == "SOUL_FRAGMENTS_VENGEANCE" then
+        cur = C_Spell and C_Spell.GetSpellCastCount and C_Spell.GetSpellCastCount(228477) or 0
+        maxP = 6
+        isSecret = true
+    elseif classPowerType == "MAELSTROM_WEAPON" then
+        cur, maxP = EllesmereUI.GetMaelstromWeapon()
+    elseif classPowerType == "TIP_OF_THE_SPEAR" then
+        cur, maxP = EllesmereUI.GetTipOfTheSpear()
+    elseif classPowerType == "WHIRLWIND_STACKS" then
+        cur, maxP = EllesmereUI.GetWhirlwindStacks()
+        if not maxP or maxP <= 0 then
+            for i = 1, #plate._cpPips do
+                plate._cpPips[i]:Hide()
+                if plate._cpPips[i]._bg then plate._cpPips[i]._bg:Hide() end
+            end
+            return
+        end
+    else
+        cur = UnitPower("player", classPowerType) or 0
+        maxP = UnitPowerMax("player", classPowerType) or classPowerMax
+        if maxP <= 0 then maxP = classPowerMax end
+    end
+    if maxP <= 0 then
+        for i = 1, #plate._cpPips do
+            plate._cpPips[i]:Hide()
+            if plate._cpPips[i]._bg then plate._cpPips[i]._bg:Hide() end
+        end
+        return
+    end
+
+    local scaledW = CP_PIP_W * cpScale
+    local scaledH = CP_PIP_H * cpScale
+    local scaledGap = GetClassPowerGap() * cpScale
+    local totalW = maxP * scaledW + (maxP - 1) * scaledGap
+    local startX = -totalW / 2 + scaledW / 2
+
     local _, pClass = UnitClass("player")
     local cpColor = CP_DEFAULT_COLOR
     if GetClassPowerClassColors() then
@@ -1969,7 +2052,6 @@ local function UpdateClassPowerOnPlate(plate)
         cpColor = { cc.r, cc.g, cc.b }
     end
 
-    local bgCol = GetClassPowerBgColor()
     local emptyCol = GetClassPowerEmptyColor()
 
     for i = 1, #plate._cpPips do
@@ -1980,10 +2062,16 @@ local function UpdateClassPowerOnPlate(plate)
             PP.Point(pip, anchorPoint, anchorFrame, anchorRelPoint,
                 startX + (i - 1) * (scaledW + scaledGap) + cpXOff, yDir * cpYOff)
 
+            -- Background texture behind each pip
+            local bg = pip._bg
+            if bg then
+                bg:ClearAllPoints()
+                bg:SetAllPoints(pip)
+                bg:SetColorTexture(bgCol.r, bgCol.g, bgCol.b, bgCol.a)
+                bg:Show()
+            end
+
             if isSecret then
-                -- Secret-value path: use a StatusBar overlay per pip.
-                -- SetMinMaxValues(i-1, i) + SetValue(secret) fills/empties
-                -- entirely on the C side without Lua comparisons.
                 if not pip._secretBar then
                     local sb = CreateFrame("StatusBar", nil, plate)
                     sb:SetStatusBarTexture("Interface\\Buttons\\WHITE8X8")
@@ -1997,11 +2085,9 @@ local function UpdateClassPowerOnPlate(plate)
                 sb:SetValue(cur)
                 sb:SetStatusBarColor(cpColor[1], cpColor[2], cpColor[3], 1)
                 sb:Show()
-                -- Show empty color underneath; StatusBar overlays on top
                 pip:SetColorTexture(emptyCol.r, emptyCol.g, emptyCol.b, emptyCol.a)
                 pip:Show()
             else
-                -- Clean-value path: hide any leftover secret overlays
                 if pip._secretBar then pip._secretBar:Hide() end
                 if i <= cur then
                     pip:SetColorTexture(cpColor[1], cpColor[2], cpColor[3], 1)
@@ -2012,6 +2098,7 @@ local function UpdateClassPowerOnPlate(plate)
             end
         else
             pip:Hide()
+            if pip._bg then pip._bg:Hide() end
             if pip._secretBar then pip._secretBar:Hide() end
         end
     end
@@ -2022,8 +2109,10 @@ local function HideClassPowerOnPlate(plate)
     if not plate or not plate._cpPips then return end
     for i = 1, #plate._cpPips do
         plate._cpPips[i]:Hide()
+        if plate._cpPips[i]._bg then plate._cpPips[i]._bg:Hide() end
         if plate._cpPips[i]._secretBar then plate._cpPips[i]._secretBar:Hide() end
     end
+    if plate._cpBar then plate._cpBar:Hide() end
 end
 
 -- Return the extra Y offset that elements above the health bar need to clear
@@ -2120,6 +2209,11 @@ local function EnableClassPowerWatcher()
         classPowerWatcher:RegisterEvent("PLAYER_DEAD")
         classPowerWatcher:RegisterEvent("PLAYER_ALIVE")
         classPowerWatcher:RegisterEvent("PLAYER_REGEN_ENABLED")
+        -- Stagger max is based on player health, so track health changes too
+        if classPowerType == "BREWMASTER_STAGGER" then
+            classPowerWatcher:RegisterUnitEvent("UNIT_HEALTH", "player")
+            classPowerWatcher:RegisterUnitEvent("UNIT_MAXHEALTH", "player")
+        end
         classPowerWatcher:SetScript("OnEvent", function(_, event, ...)
             if event == "PLAYER_SPECIALIZATION_CHANGED" then
                 -- Spec changed: tear down and rebuild (spec may no longer have this resource)
