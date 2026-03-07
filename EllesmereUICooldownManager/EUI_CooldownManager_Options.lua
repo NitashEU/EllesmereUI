@@ -2238,23 +2238,40 @@ initFrame:SetScript("OnEvent", function(self)
         end
 
         if isCDorUtil then
-            -- Two-section layout: primary category first, secondary second.
-            -- Within each section: displayed spells (selectable), then not-displayed (fires popup).
-            local hasPri = #priDisplayed > 0 or #priNotDisplayed > 0
-            local hasSec = #secDisplayed > 0 or #secNotDisplayed > 0
-            local hasDisabled = #itemsDisabled > 0
+            -- Layout: available primary → unavailable primary → available secondary
+            -- → unavailable secondary → disabled (unlearned)
+            local hasPriDisp    = #priDisplayed > 0
+            local hasPriNotDisp = #priNotDisplayed > 0
+            local hasSecDisp    = #secDisplayed > 0
+            local hasSecNotDisp = #secNotDisplayed > 0
+            local hasDisabled   = #itemsDisabled > 0
+            local needDiv = false
 
-            for _, sp in ipairs(priDisplayed)    do MakeItem(sp, false, false) end
-            for _, sp in ipairs(priNotDisplayed) do MakeItem(sp, false, true)  end
+            for _, sp in ipairs(priDisplayed) do MakeItem(sp, false, false) end
+            needDiv = hasPriDisp
 
-            if hasPri and (hasSec or hasDisabled) then MakeDivider() end
+            if hasPriNotDisp then
+                if needDiv then MakeDivider() end
+                for _, sp in ipairs(priNotDisplayed) do MakeItem(sp, false, true) end
+                needDiv = true
+            end
 
-            for _, sp in ipairs(secDisplayed)    do MakeItem(sp, false, false) end
-            for _, sp in ipairs(secNotDisplayed) do MakeItem(sp, false, true)  end
+            if hasSecDisp then
+                if needDiv then MakeDivider() end
+                for _, sp in ipairs(secDisplayed) do MakeItem(sp, false, false) end
+                needDiv = true
+            end
 
-            if (hasPri or hasSec) and hasDisabled then MakeDivider() end
+            if hasSecNotDisp then
+                if needDiv then MakeDivider() end
+                for _, sp in ipairs(secNotDisplayed) do MakeItem(sp, false, true) end
+                needDiv = true
+            end
 
-            for _, sp in ipairs(itemsDisabled) do MakeItem(sp, true, false) end
+            if hasDisabled then
+                if needDiv then MakeDivider() end
+                for _, sp in ipairs(itemsDisabled) do MakeItem(sp, true, false) end
+            end
         else
             -- Original layout for buff/trinket/other bars
             for _, sp in ipairs(itemsDisplayed) do MakeItem(sp, false, false) end

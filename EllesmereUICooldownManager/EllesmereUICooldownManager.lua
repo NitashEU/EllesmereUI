@@ -923,6 +923,32 @@ ns.EnsureMappings = EnsureMappings
 -------------------------------------------------------------------------------
 local MAIN_BAR_KEYS = { cooldowns = true, utility = true, buffs = true }
 
+-- Bar types that support talent-aware dormant slot persistence.
+-- Trinket/racial/potion and buff bars are excluded.
+local TALENT_AWARE_BAR_TYPES = { cooldowns = true, utility = true }
+
+-------------------------------------------------------------------------------
+--  Build a set of currently known (learned) spellIDs across all CDM categories.
+--  Uses GetCooldownViewerCategorySet(cat, false) which returns only learned
+--  spells, then resolves each cdID to its base spellID.
+-------------------------------------------------------------------------------
+local function BuildKnownSpellIDSet()
+    local known = {}
+    if not C_CooldownViewer or not C_CooldownViewer.GetCooldownViewerCategorySet then return known end
+    for cat = 0, 3 do
+        local knownIDs = C_CooldownViewer.GetCooldownViewerCategorySet(cat, false)
+        if knownIDs then
+            for _, cdID in ipairs(knownIDs) do
+                local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(cdID)
+                if info and info.spellID and info.spellID > 0 then
+                    known[info.spellID] = true
+                end
+            end
+        end
+    end
+    return known
+end
+
 --- Deep-copy a table (simple values + nested tables, no metatables/functions)
 local function DeepCopy(src)
     if type(src) ~= "table" then return src end
@@ -951,9 +977,13 @@ local function SaveCurrentSpecProfile()
                 entry.trackedSpells = DeepCopy(barData.trackedSpells)
                 entry.extraSpells   = DeepCopy(barData.extraSpells)
                 entry.removedSpells = DeepCopy(barData.removedSpells)
+                entry.dormantSpells = DeepCopy(barData.dormantSpells)
             elseif barData.barType ~= "trinkets" then
                 -- Custom non-trinket bars: save customSpells
                 entry.customSpells = DeepCopy(barData.customSpells)
+                if TALENT_AWARE_BAR_TYPES[barData.barType] then
+                    entry.dormantSpells = DeepCopy(barData.dormantSpells)
+                end
             end
             -- Trinket/racial/potion bars: nothing to save (refreshed on login)
             prof.barSpells[key] = entry
@@ -991,8 +1021,12 @@ local function LoadSpecProfile(specKey)
                         barData.trackedSpells = DeepCopy(saved.trackedSpells)
                         barData.extraSpells   = DeepCopy(saved.extraSpells)
                         barData.removedSpells = DeepCopy(saved.removedSpells)
+                        barData.dormantSpells = DeepCopy(saved.dormantSpells)
                     elseif barData.barType ~= "trinkets" then
                         barData.customSpells = DeepCopy(saved.customSpells)
+                        if TALENT_AWARE_BAR_TYPES[barData.barType] then
+                            barData.dormantSpells = DeepCopy(saved.dormantSpells)
+                        end
                     end
                 else
                     -- Bar exists now but wasn't in the saved profile (new bar added since)
@@ -1000,8 +1034,10 @@ local function LoadSpecProfile(specKey)
                         barData.trackedSpells = nil  -- will trigger Blizzard snapshot
                         barData.extraSpells = nil
                         barData.removedSpells = nil
+                        barData.dormantSpells = nil
                     elseif barData.barType ~= "trinkets" then
                         barData.customSpells = {}
+                        barData.dormantSpells = nil
                     end
                 end
             end
@@ -1027,8 +1063,10 @@ local function LoadSpecProfile(specKey)
                 barData.trackedSpells = nil
                 barData.extraSpells = nil
                 barData.removedSpells = nil
+                barData.dormantSpells = nil
             elseif barData.barType ~= "trinkets" then
                 barData.customSpells = {}
+                barData.dormantSpells = nil
             end
         end
 
@@ -5138,6 +5176,220 @@ local function ForcePopulateBlizzardViewers(callback)
     C_Timer.After(0.5, rehideAndSnapshot)
 end
 
+-------------------------------------------------------------------------------
+--  Talent-Aware Reconcile
+--  When talents change, instead of wiping trackedSpells and losing ordering,
+--  this function:
+--  1) Moves unavailable spells from the active list to dormantSpells with
+--     their original slot index preserved
+--  2) Re-inserts any dormant spells that became available again at their
+--     saved slot position (pushing existing spells forward)
+--  3) Appends genuinely new spells (not previously tracked) at the end
+--  Applies to: cooldown bar, utility bar, custom cooldown/utility bars
+-------------------------------------------------------------------------------
+local function TalentAwareReconcile()
+    local p = ECME.db and ECME.db.profile
+    if not p or not p.cdmBars then return end
+
+    local knownSet = BuildKnownSpellIDSet()
+
+    -- Also build a viewer pool (spellIDs currently in Blizzard CDM viewers)
+    -- so we can detect genuinely new spells to append
+    local viewerSpells = {}  -- [spellID] = true
+    for _, viewerName in pairs(BLIZZ_CDM_FRAMES) do
+        local vf = _G[viewerName]
+        if vf then
+            for ci = 1, vf:GetNumChildren() do
+                local ch = select(ci, vf:GetChildren())
+                if ch then
+                    local cdID = ch.cooldownID or (ch.cooldownInfo and ch.cooldownInfo.cooldownID)
+                    if cdID and C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo then
+                        local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(cdID)
+                        if info and info.spellID and info.spellID > 0 then
+                            viewerSpells[info.spellID] = true
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    -- Helper: reconcile a single spell list (trackedSpells or customSpells)
+    -- Returns the new active list with dormant spells removed and returning
+    -- spells re-inserted at their saved positions.
+    local function ReconcileSpellList(spellList, dormant, removed)
+        if not spellList then return nil, dormant end
+        if not dormant then dormant = {} end
+
+        -- Phase 1: separate active list into still-known and newly-dormant
+        local active = {}
+        for i, sid in ipairs(spellList) do
+            if sid and sid ~= 0 then
+                if knownSet[sid] then
+                    active[#active + 1] = sid
+                else
+                    -- Spell is no longer known — save its slot index and move to dormant
+                    dormant[sid] = i
+                end
+            end
+        end
+
+        -- Phase 2: check dormant spells — any that are now known get re-inserted
+        -- Collect returning spells sorted by their saved slot index (lowest first)
+        -- so insertions don't shift each other's target positions
+        local returning = {}
+        for sid, savedSlot in pairs(dormant) do
+            if knownSet[sid] and not (removed and removed[sid]) then
+                returning[#returning + 1] = { sid = sid, slot = savedSlot }
+            end
+        end
+        table.sort(returning, function(a, b) return a.slot < b.slot end)
+
+        -- Insert each returning spell at its saved slot (clamped to list bounds)
+        for _, entry in ipairs(returning) do
+            dormant[entry.sid] = nil  -- no longer dormant
+            -- Clamp insertion index: if the list is shorter now, insert at end
+            local insertAt = entry.slot
+            if insertAt > #active + 1 then insertAt = #active + 1 end
+            if insertAt < 1 then insertAt = 1 end
+            table.insert(active, insertAt, entry.sid)
+        end
+
+        -- Phase 3: clean up dormant entries for spells that are no longer in
+        -- any CDM category at all (removed from game / different class)
+        -- Keep dormant entries for spells that exist but are just unlearned
+        local allSpellIDs = {}
+        if C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCategorySet then
+            for cat = 0, 3 do
+                local allIDs = C_CooldownViewer.GetCooldownViewerCategorySet(cat, true)
+                if allIDs then
+                    for _, cdID in ipairs(allIDs) do
+                        local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(cdID)
+                        if info and info.spellID and info.spellID > 0 then
+                            allSpellIDs[info.spellID] = true
+                        end
+                    end
+                end
+            end
+        end
+        for sid in pairs(dormant) do
+            if not allSpellIDs[sid] then
+                dormant[sid] = nil
+            end
+        end
+
+        return (#active > 0 and active or nil), (next(dormant) and dormant or nil)
+    end
+
+    -- Process each bar
+    for _, barData in ipairs(p.cdmBars.bars) do
+        if MAIN_BAR_KEYS[barData.key] and TALENT_AWARE_BAR_TYPES[barData.key] then
+            -- Main bars (cooldowns, utility): reconcile trackedSpells
+            if barData.trackedSpells and #barData.trackedSpells > 0 then
+                barData.trackedSpells, barData.dormantSpells =
+                    ReconcileSpellList(barData.trackedSpells, barData.dormantSpells, barData.removedSpells)
+            end
+        elseif MAIN_BAR_KEYS[barData.key] then
+            -- Buffs bar: simple viewer-pool reconcile (no dormant slots)
+            local viewerName = BLIZZ_CDM_FRAMES[barData.key]
+            if viewerName and barData.trackedSpells then
+                local vf = _G[viewerName]
+                if vf then
+                    local pool = {}
+                    for ci = 1, vf:GetNumChildren() do
+                        local ch = select(ci, vf:GetChildren())
+                        if ch then
+                            local cdID = ch.cooldownID or (ch.cooldownInfo and ch.cooldownInfo.cooldownID)
+                            if cdID and C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo then
+                                local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(cdID)
+                                if info and info.spellID and info.spellID > 0 then
+                                    pool[info.spellID] = true
+                                end
+                            end
+                        end
+                    end
+                    local poolHasAny = false
+                    for _ in pairs(pool) do poolHasAny = true; break end
+                    if poolHasAny then
+                        local removed = barData.removedSpells or {}
+                        local kept, keptSet = {}, {}
+                        for _, sid in ipairs(barData.trackedSpells) do
+                            if sid and sid ~= 0 and pool[sid] and not removed[sid] then
+                                kept[#kept + 1] = sid
+                                keptSet[sid] = true
+                            end
+                        end
+                        for sid in pairs(pool) do
+                            if not keptSet[sid] and not removed[sid] then
+                                kept[#kept + 1] = sid
+                            end
+                        end
+                        barData.trackedSpells = #kept > 0 and kept or nil
+                    end
+                end
+            end
+        elseif TALENT_AWARE_BAR_TYPES[barData.barType] then
+            -- Custom cooldown/utility bars: reconcile customSpells
+            if barData.customSpells and #barData.customSpells > 0 then
+                barData.customSpells, barData.dormantSpells =
+                    ReconcileSpellList(barData.customSpells, barData.dormantSpells, nil)
+            end
+        end
+    end
+
+    -- Append genuinely new spells that appeared in the viewer but aren't
+    -- tracked on any bar yet (e.g. a new talent that wasn't previously assigned)
+    -- This mirrors what ReconcileMainBarSpells does for new spells.
+    local globalTracked = {}
+    for _, barData in ipairs(p.cdmBars.bars) do
+        if MAIN_BAR_KEYS[barData.key] and barData.trackedSpells then
+            for _, sid in ipairs(barData.trackedSpells) do
+                globalTracked[sid] = true
+            end
+        end
+        if barData.dormantSpells then
+            for sid in pairs(barData.dormantSpells) do
+                globalTracked[sid] = true
+            end
+        end
+        if barData.removedSpells then
+            for sid in pairs(barData.removedSpells) do
+                globalTracked[sid] = true
+            end
+        end
+    end
+
+    for _, barData in ipairs(p.cdmBars.bars) do
+        if barData.enabled and MAIN_BAR_KEYS[barData.key] then
+            local viewerName = BLIZZ_CDM_FRAMES[barData.key]
+            if viewerName then
+                local vf = _G[viewerName]
+                if vf then
+                    for ci = 1, vf:GetNumChildren() do
+                        local ch = select(ci, vf:GetChildren())
+                        if ch then
+                            local cdID = ch.cooldownID or (ch.cooldownInfo and ch.cooldownInfo.cooldownID)
+                            if cdID and C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo then
+                                local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(cdID)
+                                if info and info.spellID and info.spellID > 0 then
+                                    local sid = info.spellID
+                                    if not globalTracked[sid] then
+                                        if not barData.trackedSpells then barData.trackedSpells = {} end
+                                        barData.trackedSpells[#barData.trackedSpells + 1] = sid
+                                        globalTracked[sid] = true
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    BuildAllCDMBars()
+end
+
 -- Reconcile main bar spellIDs against Blizzard's current CDM pool.
 -- Keeps existing order, removes spells no longer in the bar's own viewer,
 -- appends newly-appeared spells at the end.
@@ -5167,9 +5419,20 @@ local function ReconcileMainBarSpells()
         return pool
     end
 
+    -- Build a combined pool from ALL viewers so cross-category spells
+    -- (e.g. a utility spell placed on the cooldown bar) are not stripped.
+    local allViewerSpells = {}
+    for _, viewerName in pairs(BLIZZ_CDM_FRAMES) do
+        local pool = BuildViewerPool(viewerName)
+        for sid in pairs(pool) do allViewerSpells[sid] = true end
+    end
+    -- Also include all known spellIDs from the API so spells that are
+    -- learned but whose viewer hasn't populated yet are preserved.
+    local knownSet = BuildKnownSpellIDSet()
+    for sid in pairs(knownSet) do allViewerSpells[sid] = true end
+
     for _, barData in ipairs(p.cdmBars.bars) do
         if barData.enabled and MAIN_BAR_KEYS[barData.key] then
-            -- Each bar reconciles only against its own Blizzard viewer
             local viewerName = BLIZZ_CDM_FRAMES[barData.key]
             if not viewerName then
                 -- No viewer for this bar key (shouldn't happen for main bars)
@@ -5184,17 +5447,30 @@ local function ReconcileMainBarSpells()
                 if poolHasAny then
                     local existing = barData.trackedSpells
                     local removed = barData.removedSpells or {}
+                    local isTalentAware = TALENT_AWARE_BAR_TYPES[barData.key]
                     local kept = {}
                     local keptSet = {}
-                    for _, sid in ipairs(existing) do
-                        if sid and sid ~= 0 and barPool[sid] and not removed[sid] then
-                            kept[#kept + 1] = sid
-                            keptSet[sid] = true
+                    for i, sid in ipairs(existing) do
+                        if sid and sid ~= 0 and not removed[sid] then
+                            if allViewerSpells[sid] then
+                                -- Spell exists in some viewer or is known — keep it
+                                kept[#kept + 1] = sid
+                                keptSet[sid] = true
+                            elseif isTalentAware then
+                                -- Spell not known at all — move to dormant
+                                if not barData.dormantSpells then barData.dormantSpells = {} end
+                                barData.dormantSpells[sid] = i
+                            end
                         end
                     end
-                    -- Append new spells from this bar's pool only
+                    -- Append new spells from this bar's own viewer only
+                    -- (cross-category spells are added explicitly by the user)
+                    -- Skip spells that are dormant (they'll return via
+                    -- TalentAwareReconcile at their saved position)
+                    local dormant = barData.dormantSpells
                     for sid in pairs(barPool) do
-                        if not keptSet[sid] and not removed[sid] then
+                        if not keptSet[sid] and not removed[sid]
+                           and not (dormant and dormant[sid]) then
                             kept[#kept + 1] = sid
                         end
                     end
@@ -5327,16 +5603,15 @@ local function ScheduleTalentRebuild()
         if db and db.global and db.global.multiChargeSpells then
             wipe(db.global.multiChargeSpells)
         end
-        -- Reconcile main bar spellIDs against the new talent set.
-        -- Spells that no longer exist in Blizzard's CDM pool are removed;
-        -- new spells are appended. User ordering is preserved.
-        ReconcileMainBarSpells()
+        -- Reconcile bar spellIDs against the new talent set.
+        -- Unavailable spells are moved to dormant slots (preserving position);
+        -- returning spells are re-inserted at their saved slot index.
+        TalentAwareReconcile()
         -- Clear spell icon cache so custom bars pick up new textures for
-        -- talent-swapped spells (e.g. Holy Prism ΓåÆ Divine Toll icon)
+        -- talent-swapped spells
         wipe(_spellIconCache)
         -- Rebuild keybind cache (talent swap may change action slot contents)
         UpdateCDMKeybinds()
-        BuildAllCDMBars()
     end)
 end
 local _unitAuraTimer = nil

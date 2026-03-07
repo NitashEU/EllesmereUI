@@ -710,21 +710,17 @@ local function ApplyDarkTheme(health)
             health.bg:SetPoint("BOTTOMRIGHT", health, "BOTTOMRIGHT", 0, 0)
             health.bg:SetColorTexture(DARK_BG_R, DARK_BG_G, DARK_BG_B, 1)
         end
-        -- PostUpdateColor hook to re-apply after oUF tries to color
+        -- PostUpdateColor: re-apply dark color after oUF tries to class-color,
+        -- and re-anchor bg to track the fill edge.
+        -- Alpha is NOT re-applied here — SetStatusBarColor(r,g,b) with 3 args
+        -- preserves existing texture alpha, so the alpha set by
+        -- ApplyHealthBarOpacity persists through oUF recolors.
         health.PostUpdateColor = function(self)
             self:SetStatusBarColor(DARK_HEALTH_R, DARK_HEALTH_G, DARK_HEALTH_B, DARK_HEALTH_A)
-            -- Re-apply bar opacity so it isn't lost when oUF recolors
-            local unitKey = self._euiUnitKey
-            local s = unitKey and db.profile[unitKey]
-            local alpha = (s and s.healthBarOpacity) or db.profile.healthBarOpacity or 0.9
-            local ft = self:GetStatusBarTexture()
-            if ft then ft:SetAlpha(alpha) end
             if self.bg then
                 self.bg:ClearAllPoints()
                 self.bg:SetPoint("TOPLEFT", self:GetStatusBarTexture(), "TOPRIGHT", 0, 0)
                 self.bg:SetPoint("BOTTOMRIGHT", self, "BOTTOMRIGHT", 0, 0)
-                self.bg:SetColorTexture(DARK_BG_R, DARK_BG_G, DARK_BG_B, 1)
-                self.bg:SetAlpha(alpha)
             end
         end
     else
@@ -732,20 +728,13 @@ local function ApplyDarkTheme(health)
         health.colorReaction = true
         health.colorTapped = true
         health.colorDisconnected = true
-        -- Re-apply bar opacity after oUF recolors (SetVertexColor resets alpha)
-        -- Also tint the bg to 20% class color
+        -- Tint bg to 20% of the class/reaction color.
+        -- Alpha is NOT re-applied — SetStatusBarColor(r,g,b) preserves
+        -- existing texture alpha through oUF recolors.
         health.PostUpdateColor = function(self, _, color)
-            local unitKey = self._euiUnitKey
-            local s = unitKey and db.profile[unitKey]
-            local alpha = (s and s.healthBarOpacity) or db.profile.healthBarOpacity or 0.9
-            local ft = self:GetStatusBarTexture()
-            if ft then ft:SetAlpha(alpha) end
-            if self.bg then
-                if color and color.GetRGB then
-                    local r, g, b = color:GetRGB()
-                    self.bg:SetColorTexture(r * 0.2, g * 0.2, b * 0.2, 0.75)
-                end
-                self.bg:SetAlpha(alpha)
+            if self.bg and color and color.GetRGB then
+                local r, g, b = color:GetRGB()
+                self.bg:SetColorTexture(r * 0.2, g * 0.2, b * 0.2, 0.75)
             end
         end
         if health.bg then
@@ -3659,24 +3648,39 @@ local function CreateCustomClassPower(playerFrame, style)
     -- Event driver
     local eventFrame = CreateFrame("Frame", nil, container)
     if isCustom then
-        -- Custom resources: poll + manual tracker events
-        local elapsed = 0
-        eventFrame:SetScript("OnUpdate", function(_, dt)
-            elapsed = elapsed + dt
-            if elapsed < 0.1 then return end
-            elapsed = 0
-            UpdatePips()
-        end)
-        eventFrame:RegisterUnitEvent("UNIT_AURA", "player")
+        -- Per-resource event registration: only register what each resource
+        -- actually needs to avoid unnecessary event traffic.
+        local needsOnUpdate = (powerType ~= "MAELSTROM_WEAPON")
+        local needsAura     = (powerType == "MAELSTROM_WEAPON")
+        local needsCasts    = (powerType == "TIP_OF_THE_SPEAR" or powerType == "WHIRLWIND_STACKS")
+
+        if needsOnUpdate then
+            local elapsed = 0
+            eventFrame:SetScript("OnUpdate", function(_, dt)
+                elapsed = elapsed + dt
+                if elapsed < 0.1 then return end
+                elapsed = 0
+                UpdatePips()
+            end)
+        end
+
         eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
         eventFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
-        eventFrame:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
-        eventFrame:RegisterEvent("PLAYER_DEAD")
-        eventFrame:RegisterEvent("PLAYER_ALIVE")
-        eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+
+        if needsAura then
+            eventFrame:RegisterUnitEvent("UNIT_AURA", "player")
+        end
+        if needsCasts then
+            eventFrame:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
+            eventFrame:RegisterEvent("PLAYER_DEAD")
+            eventFrame:RegisterEvent("PLAYER_ALIVE")
+        end
+        if powerType == "WHIRLWIND_STACKS" then
+            eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+        end
+
         eventFrame:SetScript("OnEvent", function(_, event, ...)
             if event == "PLAYER_SPECIALIZATION_CHANGED" then
-                -- Spec changed: destroy and rebuild via ReloadFrames
                 DestroyCustomClassPower()
                 frames._classPowerBar = nil
                 C_Timer.After(0.1, function()
@@ -3684,7 +3688,6 @@ local function CreateCustomClassPower(playerFrame, style)
                 end)
                 return
             elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
-                -- Route to manual trackers (skip if resource bars handles it)
                 if not _G._ERB_AceDB and EllesmereUI then
                     local unit, castGUID, spellID = ...
                     if unit == "player" then
@@ -5183,6 +5186,12 @@ function InitializeFrames()
         local offsetX = db.profile.player.classPowerBarX or 0
         local offsetY = db.profile.player.classPowerBarY or 0
 
+        -- Stop castbar watcher by default; only re-enabled in the "bottom" branch
+        if bar._castbarWatcher then
+            bar._castbarWatcher:SetScript("OnUpdate", nil)
+            bar._castbarWatcher:Hide()
+        end
+
         if style == "modern" and position == "above" then
             -- Above health bar, inside the frame â€” pips stretch to fill health bar width
             -- Bottom of pips flush with top of health bar, top of pips flush with top of border
@@ -5279,9 +5288,16 @@ function InitializeFrames()
                 PP.Point(bar, "TOP", frames.player, "BOTTOM", offsetX, baseY)
             end
             AnchorBottom()
-            if not bar._castbarWatcher then
-                bar._castbarWatcher = CreateFrame("Frame", nil, bar)
-                bar._castbarWatcher:SetScript("OnUpdate", function()
+            -- Only run the castbar watcher if the player castbar is enabled
+            if db.profile.player.showPlayerCastbar then
+                if not bar._castbarWatcher then
+                    bar._castbarWatcher = CreateFrame("Frame", nil, bar)
+                end
+                local cbElapsed = 0
+                bar._castbarWatcher:SetScript("OnUpdate", function(_, dt)
+                    cbElapsed = cbElapsed + dt
+                    if cbElapsed < 0.1 then return end
+                    cbElapsed = 0
                     local castbarBg = frames.player.Castbar and frames.player.Castbar:GetParent()
                     local nowVis = castbarBg and castbarBg:IsShown() and db.profile.player.showPlayerCastbar
                     if nowVis ~= bar._lastCastVis then
@@ -5289,6 +5305,7 @@ function InitializeFrames()
                         AnchorBottom()
                     end
                 end)
+                bar._castbarWatcher:Show()
             end
             ResizeFrameForClassPower(0)
         end

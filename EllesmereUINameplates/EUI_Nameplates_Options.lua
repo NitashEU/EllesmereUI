@@ -1,7 +1,7 @@
--------------------------------------------------------------------------------
+﻿-------------------------------------------------------------------------------
 --  EUI_Nameplates_Options.lua
 --  Registers the Nameplates module with EllesmereUI
---  Pure UI migration â€“ all get/set calls go to EllesmereUINameplatesDB,
+--  Pure UI migration Ã¢â‚¬â€œ all get/set calls go to EllesmereUINameplatesDB,
 --  same keys, same defaults, same refresh functions as the AceConfig version.
 --  Does NOT touch nameplate rendering logic.
 -------------------------------------------------------------------------------
@@ -63,7 +63,7 @@ initFrame:SetScript("OnEvent", function(self)
     local floor = math.floor
 
     ---------------------------------------------------------------------------
-    --  DB helper â€“ always reads live EllesmereUINameplatesDB
+    --  DB helper Ã¢â‚¬â€œ always reads live EllesmereUINameplatesDB
     ---------------------------------------------------------------------------
     local function DB()
         return EllesmereUINameplatesDB
@@ -196,7 +196,7 @@ initFrame:SetScript("OnEvent", function(self)
     --  Live Preview System
     --
     --  A cosmetic-only enemy nameplate preview built from persistent frames.
-    --  Created once, updated via :Update() â€” no rebuilding, no GC pressure.
+    --  Created once, updated via :Update() Ã¢â‚¬â€ no rebuilding, no GC pressure.
     --  Reads current DB settings for colors, sizes, font, health number, etc.
     ---------------------------------------------------------------------------
     local activePreview
@@ -221,7 +221,7 @@ initFrame:SetScript("OnEvent", function(self)
     local _sliderDragShowRaidMarker = false
     local _sliderDragShowClassification = false
 
-    -- Persistent random preview values â€” regenerated only on tab switch, NOT on
+    -- Persistent random preview values Ã¢â‚¬â€ regenerated only on tab switch, NOT on
     -- profile changes or setting tweaks (which trigger fast-path RefreshPage rebuilds).
     local _previewHpPct
     local _previewCastFill
@@ -247,7 +247,7 @@ initFrame:SetScript("OnEvent", function(self)
     --- @param parentW number  available width
     --- @return number height consumed
     --- Build the nameplate preview in the content header area.
-    --- Exact 1:1 replica of a real enemy nameplate â€” same pixel sizes,
+    --- Exact 1:1 replica of a real enemy nameplate Ã¢â‚¬â€ same pixel sizes,
     --- same anchors, same fonts, same borders. No glow, no added effects.
     --- @param parent  Frame   contentHeaderFrame
     --- @param parentW number  available width
@@ -260,7 +260,7 @@ initFrame:SetScript("OnEvent", function(self)
         local BORDER_CORNER = 6
         local BORDER_TEX = "Interface\\AddOns\\EllesmereUINameplates\\Media\\border-colorless.png"
 
-        -- Container â€” sized in Update()
+        -- Container Ã¢â‚¬â€ sized in Update()
         local pf = CreateFrame("Frame", nil, parent)
         pf:SetPoint("TOP", parent, "TOP", 0, 0)
 
@@ -293,7 +293,7 @@ initFrame:SetScript("OnEvent", function(self)
         -- Icon textures whose insets (px, -px) need refreshing when scale changes
         local _insetIcons = {}
 
-        -- 1px black border helper â€“ uses Snap() for the preview's effective scale
+        -- 1px black border helper Ã¢â‚¬â€œ uses Snap() for the preview's effective scale
         -- (not PixelUtil, which snaps to screen pixels and can disagree with
         -- the preview's own pixel grid at certain panel scales)
         -- Returns a refresh function that re-snaps the 1px sizes when scale changes.
@@ -323,7 +323,7 @@ initFrame:SetScript("OnEvent", function(self)
             if tex.SetSnapToPixelGrid then tex:SetSnapToPixelGrid(false); tex:SetTexelSnappingBias(0) end
         end
 
-        -- Health bar â€” the central anchor for everything
+        -- Health bar Ã¢â‚¬â€ the central anchor for everything
         local health = CreateFrame("StatusBar", nil, pf)
         health:SetStatusBarTexture("Interface\\Buttons\\WHITE8x8")
         UnsnapTex(health:GetStatusBarTexture())
@@ -360,7 +360,7 @@ initFrame:SetScript("OnEvent", function(self)
 
         local BORDER_TEX_SIMPLE = "Interface\\AddOns\\EllesmereUINameplates\\Media\\border-simple.png"
 
-        -- Wrapper frame around the health bar â€” a plain Frame (not StatusBar).
+        -- Wrapper frame around the health bar Ã¢â‚¬â€ a plain Frame (not StatusBar).
         -- The image border is parented to this wrapper so it never interacts
         -- with StatusBar internals.  Sized to match the health bar exactly.
         local healthWrapper = CreateFrame("Frame", nil, pf)
@@ -385,7 +385,7 @@ initFrame:SetScript("OnEvent", function(self)
                 f._texs[#f._texs + 1] = t
                 return t
             end
-            -- Corners â€” inset UV by half a texel (T) from texture edges (0.0 and 1.0)
+            -- Corners Ã¢â‚¬â€ inset UV by half a texel (T) from texture edges (0.0 and 1.0)
             -- so the GPU fully samples the outermost solid pixel line.
             local T = 0.042
             local function UnsnapAfter(t)
@@ -511,7 +511,7 @@ initFrame:SetScript("OnEvent", function(self)
         arrows.right:Hide()
         pf._arrows = arrows  -- expose for Update resizing
 
-        -- Classification icon (elite dragon) â€” shown when transient toggle is on
+        -- Classification icon (elite dragon) Ã¢â‚¬â€ shown when transient toggle is on
         local classIcon = pf:CreateTexture(nil, "OVERLAY")
         classIcon:SetTexture("Interface\\AddOns\\EllesmereUI\\media\\elite-rare-indicator.png")
         classIcon:SetSize(24, 24)
@@ -570,7 +570,7 @@ initFrame:SetScript("OnEvent", function(self)
         castParts.targetFS:SetMaxLines(1)
         castParts.targetFS:SetText(UnitName("player") or "Spell Target")
 
-        -- Class power pips (cosmetic preview â€” queries live class/spec resource count)
+        -- Class power pips (cosmetic preview Ã¢â‚¬â€ queries live class/spec resource count)
         -- Packed into a single table to stay under Lua's 60-upvalue limit.
         local CP = {
             PIP_W = 8, PIP_H = 3, PIP_GAP = 2,
@@ -630,8 +630,8 @@ initFrame:SetScript("OnEvent", function(self)
         -- Debuffs: 2 icons centered above name
         local debuffs = {}
         local debuffData = {
-            { icon = 136207, text = "8",  dur = 12, elapsed = 4, stacks = 3 },  -- SW:P  (12s total, 4s elapsed â†’ 8s left, 3 stacks)
-            { icon = 135978, text = "14", dur = 18, elapsed = 4, stacks = 0 },  -- VT    (18s total, 4s elapsed â†’ 14s left)
+            { icon = 136207, text = "8",  dur = 12, elapsed = 4, stacks = 3 },  -- SW:P  (12s total, 4s elapsed Ã¢â€ â€™ 8s left, 3 stacks)
+            { icon = 135978, text = "14", dur = 18, elapsed = 4, stacks = 0 },  -- VT    (18s total, 4s elapsed Ã¢â€ â€™ 14s left)
         }
         for i = 1, PV_CONST.DEBUFF_COUNT do
             local d = CreateFrame("Frame", nil, pf)
@@ -734,7 +734,7 @@ initFrame:SetScript("OnEvent", function(self)
         local _cachedRawBarW, _cachedXOff
 
         -------------------------------------------------------------------
-        --  Update â€” re-reads DB, applies to existing frames. No rebuilds.
+        --  Update Ã¢â‚¬â€ re-reads DB, applies to existing frames. No rebuilds.
         -------------------------------------------------------------------
         pf.Update = function(self)
             local fontPath   = (EllesmereUI and EllesmereUI.GetFontPath and EllesmereUI.GetFontPath("nameplates")) or DBVal("font")
@@ -866,7 +866,7 @@ initFrame:SetScript("OnEvent", function(self)
                 if pf._raidOverlay then pf._raidOverlay:Show() end
             end
 
-            -- Classification icon (elite dragon) â€” slot-based
+            -- Classification icon (elite dragon) Ã¢â‚¬â€ slot-based
             classIcon:ClearAllPoints()
             local clXOff, clYOff = 0, 0
             if clPos ~= "none" then
@@ -897,7 +897,7 @@ initFrame:SetScript("OnEvent", function(self)
                 if pf._classOverlay then pf._classOverlay:Show() end
             end
 
-            -- Arrow push is no longer used â€” arrows are placed OUTSIDE auras now
+            -- Arrow push is no longer used Ã¢â‚¬â€ arrows are placed OUTSIDE auras now
             -- (arrow positioning happens after all auras are placed)
 
             -- Cast bar: full health bar width, icon hangs outside left edge
@@ -925,7 +925,7 @@ initFrame:SetScript("OnEvent", function(self)
             -- Name font + color + position (font size set per-slot below)
             local nameYOff = DBVal("nameYOffset") or defaults.nameYOffset
 
-            -- â”€â”€ Slot-based text positioning â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            -- Ã¢â€â‚¬Ã¢â€â‚¬ Slot-based text positioning Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
             -- Read slot assignments
             local slotTop    = DBVal("textSlotTop") or defaults.textSlotTop
             local slotRight  = DBVal("textSlotRight") or defaults.textSlotRight
@@ -1324,7 +1324,7 @@ initFrame:SetScript("OnEvent", function(self)
                 if pf._arrowOverlay then pf._arrowOverlay:Hide() end
             end
 
-            -- Height calculation â€” "top" slot determines the area above the name
+            -- Height calculation Ã¢â‚¬â€ "top" slot determines the area above the name
             -- Find which aura type is in the "top" slot for height,
             -- including per-slot Y offsets that push elements further up.
             local topExtent = 0
@@ -1902,7 +1902,7 @@ initFrame:SetScript("OnEvent", function(self)
                     t3:SetPoint("TOPLEFT", pf, "TOPLEFT", SLIDER_LEFT, r3Y - 2)
                     v3:ClearAllPoints(); v3:SetPoint("TOPRIGHT", pf, "TOPRIGHT", -SIDE_PAD, r3Y)
 
-                    -- Row 4: Show Health Percent (toggle â€” inverted from friendlyHideHealthText)
+                    -- Row 4: Show Health Percent (toggle Ã¢â‚¬â€ inverted from friendlyHideHealthText)
                     local r4Y = r3Y - ROW_H - GAP
                     local lbl4 = MakeFont(pf, 11, nil, 1, 1, 1); lbl4:SetAlpha(0.6)
                     lbl4:SetText("Show Health Percent"); lbl4:SetPoint("TOPLEFT", pf, "TOPLEFT", SIDE_PAD, r4Y)
@@ -2739,286 +2739,24 @@ initFrame:SetScript("OnEvent", function(self)
     end
 
     ---------------------------------------------------------------------------
-    --  Preset system now lives in EllesmereUI.lua (EllesmereUI:BuildPresetSystem)
-    --  Callers pass dbFunc, dbValFunc, and defaults in the cfg table.
-    ---------------------------------------------------------------------------
-
-    ---------------------------------------------------------------------------
     --  Display page  (preview in content header + settings in scroll area)
     ---------------------------------------------------------------------------
     local _updatePreviewHooked = false
-    local onPresetSettingChanged  -- module-scope: always updated by SetContentHeader
-    local _displayPresetCheckDrift  -- stashed reference: survives tab switches
 
     local _refreshAllPlatesHooked = false
-    local onColorPresetSettingChanged  -- module-scope: always updated by Colors SetContentHeader
-    local _colorPresetCheckDrift  -- stashed reference: survives tab switches
 
     local function BuildDisplayPage(pageName, parent, yOffset)
         local W = EllesmereUI.Widgets
         local y = yOffset
         local _, h
 
-        -- Clear color preset hook (only active on Colors page)
-        onColorPresetSettingChanged = nil
-
         local function isBorderNone()
             return (DBVal("borderStyle") or defaults.borderStyle) == "none"
         end
 
-        -- [PRESET SYSTEM DISABLED]
-        --[[ Display preset system: presetKeys, randomize, refresh
-        local displayPresetKeys = {
-            "borderStyle", "borderColor", "targetGlowStyle", "showTargetArrows",
-            "showClassPower", "classPowerPos", "classPowerYOffset", "classPowerScale",
-            "classPowerClassColors", "classPowerGap", "classPowerCustomColor", "classPowerBgColor", "classPowerEmptyColor",
-            "textSlotTop", "textSlotRight", "textSlotLeft", "textSlotCenter",
-            "nameYOffset",
-            "healthBarHeight", "healthBarWidth", "castBarHeight",
-            "castScale", "showCastIcon", "castIconScale",
-            "castNameSize", "castNameColor", "castTargetSize", "castTargetClassColor", "castTargetColor",
-            "debuffSlot", "buffSlot", "ccSlot",
-            "debuffYOffset", "sideAuraXOffset", "auraSpacing",
-            "debuffTimerPosition", "buffTimerPosition", "ccTimerPosition",
-            "auraDurationTextSize", "auraDurationTextColor",
-            "auraStackTextSize", "auraStackTextColor",
-            "buffTextSize", "buffTextColor", "ccTextSize", "ccTextColor",
-            "raidMarkerPos",
-            "classificationSlot",
-            "hashLineEnabled", "hashLinePercent", "hashLineColor",
-            "focusCastHeight",
-            "font",
-            -- Slot-based size + offset keys
-            "topSlotSize", "topSlotXOffset", "topSlotYOffset",
-            "rightSlotSize", "rightSlotXOffset", "rightSlotYOffset",
-            "leftSlotSize", "leftSlotXOffset", "leftSlotYOffset",
-            "toprightSlotSize", "toprightSlotXOffset", "toprightSlotYOffset", "toprightSlotGrowth",
-            "topleftSlotSize", "topleftSlotXOffset", "topleftSlotYOffset", "topleftSlotGrowth",
-            -- Text slot size + offset keys
-            "textSlotTopSize", "textSlotTopXOffset", "textSlotTopYOffset",
-            "textSlotRightSize", "textSlotRightXOffset", "textSlotRightYOffset",
-            "textSlotLeftSize", "textSlotLeftXOffset", "textSlotLeftYOffset",
-            "textSlotCenterSize", "textSlotCenterXOffset", "textSlotCenterYOffset",
-            -- Text slot color keys
-            "textSlotTopColor", "textSlotRightColor", "textSlotLeftColor", "textSlotCenterColor",
-            -- Color keys (merged from Colors tab preset)
-            "focusColorEnabled", "focus", "focusOverlayTexture", "focusOverlayAlpha", "focusOverlayColor",
-            "caster", "miniboss", "enemyInCombat",
-            "castBar", "interruptReady", "castBarUninterruptible",
-            "tankHasAggroEnabled", "tankHasAggro", "tankLosingAggro", "tankNoAggro",
-            "dpsHasAggro", "dpsNearAggro",
-            -- Bar texture overlay keys
-            "healthBarTexture", "healthBarTextureColor",
-            "healthBarTextureClassColor", "healthBarTextureScale", "healthBarTextureFit",
-        }
-
-        local function RandomizeDisplaySettings(db)
-            local borderOptions = { "ellesmere", "simple" }
-            local glowOptions = { "ellesmereui", "vibrant", "none" }
-            local cpPosOptions = { "bottom", "top" }
-            local timerOptions = { "topleft", "center", "topright", "none" }
-            local function rColor() return { r = math.random(), g = math.random(), b = math.random() } end
-            local function pick(t) return t[math.random(#t)] end
-
-            -- Aura slots: exclusive pick from all 5 visible slots, remainder gets "none"
-            local auraSlots = { "top", "left", "right", "topleft", "topright", "bottom" }
-            local function pickAuraSlot()
-                if #auraSlots == 0 then return "none" end
-                local i = math.random(#auraSlots)
-                local s = auraSlots[i]
-                table.remove(auraSlots, i)
-                return s
-            end
-
-            -- Border / glow / arrows
-            db.borderStyle = pick(borderOptions)
-            db.borderColor = rColor()
-            db.targetGlowStyle = pick(glowOptions)
-            db.showTargetArrows = math.random() > 0.5
-
-            -- Class power
-            db.showClassPower = math.random() > 0.5
-            db.classPowerPos = pick(cpPosOptions)
-            db.classPowerYOffset = math.random(0, 6)
-            db.classPowerXOffset = math.random(-10, 10)
-            db.classPowerScale = 0.6 + math.random() * 0.8
-            db.classPowerClassColors = math.random() > 0.5
-            db.classPowerGap = math.random(0, 6)
-
-            -- Text slot positions: exclusive pick from pool
-            local textPool = { "enemyName", "healthPercent", "healthNumber", "healthPctNum", "healthNumPct" }
-            local function pickTextElement()
-                if #textPool == 0 then return "none" end
-                local i = math.random(#textPool)
-                local e = textPool[i]
-                table.remove(textPool, i)
-                return e
-            end
-            db.textSlotTop = pickTextElement()
-            db.textSlotRight = pickTextElement()
-            db.textSlotLeft = pickTextElement()
-            db.textSlotCenter = pickTextElement()
-
-            -- Health / name text (per-slot colors)
-            db.textSlotTopColor = rColor()
-            db.textSlotRightColor = rColor()
-            db.textSlotLeftColor = rColor()
-            db.textSlotCenterColor = rColor()
-            db.nameYOffset = math.random(0, 10)
-
-            -- Bar sizes
-            db.healthBarHeight = math.random(10, 24)
-            db.healthBarWidth = math.random(2, 10)
-            db.castBarHeight = math.random(10, 24)
-
-            -- Cast bar text
-            db.castNameSize = math.random(8, 14)
-            db.castNameColor = rColor()
-            db.castTargetSize = math.random(8, 14)
-            db.castTargetClassColor = (math.random() > 0.5)
-            db.castTargetColor = rColor()
-            db.castScale = math.random(10, 40) * 5  -- 50-200 step 5
-            db.showCastIcon = math.random() > 0.3
-            db.castIconScale = math.floor((0.5 + math.random() * 1.5) * 10 + 0.5) / 10
-
-            -- Aura slots (exclusive)
-            db.debuffSlot = pickAuraSlot()
-            db.buffSlot = pickAuraSlot()
-            db.ccSlot = pickAuraSlot()
-
-            -- Aura offsets / spacing
-            db.debuffYOffset = math.random(0, 8)
-            db.sideAuraXOffset = math.random(0, 8)
-            db.auraSpacing = math.random(0, 6)
-
-            -- Slot-based icon sizes (all 5 slots)
-            db.topSlotSize = math.random(18, 34)
-            db.rightSlotSize = math.random(18, 34)
-            db.leftSlotSize = math.random(18, 34)
-            db.toprightSlotSize = math.random(18, 34)
-            db.topleftSlotSize = math.random(18, 34)
-            -- Slot-based icon offsets (all 0 for randomize)
-            db.topSlotXOffset = 0;      db.topSlotYOffset = 0
-            db.rightSlotXOffset = 0;    db.rightSlotYOffset = 0
-            db.leftSlotXOffset = 0;     db.leftSlotYOffset = 0
-            db.toprightSlotXOffset = 0; db.toprightSlotYOffset = 0
-            db.topleftSlotXOffset = 0;  db.topleftSlotYOffset = 0
-
-            -- Timer positions (unified â€” all set to same value)
-            local timerPos = pick(timerOptions)
-            db.debuffTimerPosition = timerPos
-            db.buffTimerPosition = timerPos
-            db.ccTimerPosition = timerPos
-
-            -- Aura text
-            db.auraDurationTextSize = math.random(8, 14)
-            db.auraDurationTextColor = rColor()
-            db.auraStackTextSize = math.random(8, 14)
-            db.auraStackTextColor = rColor()
-            db.buffTextSize = math.random(8, 14)
-            db.buffTextColor = rColor()
-            db.ccTextSize = math.random(8, 14)
-            db.ccTextColor = rColor()
-
-            -- Raid marker (unified slot pick â€” exclusive with auras)
-            db.raidMarkerPos = pickAuraSlot()
-
-            -- Classification indicator slot
-            db.classificationSlot = pickAuraSlot()
-
-            -- Text slot sizes
-            db.textSlotTopSize = math.random(8, 14)
-            db.textSlotRightSize = math.random(8, 14)
-            db.textSlotLeftSize = math.random(8, 14)
-            db.textSlotCenterSize = math.random(8, 14)
-            -- Text slot offsets (all 0 for randomize)
-            db.textSlotTopXOffset = 0;    db.textSlotTopYOffset = 0
-            db.textSlotRightXOffset = 0;  db.textSlotRightYOffset = 0
-            db.textSlotLeftXOffset = 0;   db.textSlotLeftYOffset = 0
-            db.textSlotCenterXOffset = 0; db.textSlotCenterYOffset = 0
-
-            -- Hash line
-            db.hashLineEnabled = math.random() > 0.7
-            db.hashLinePercent = math.random(10, 50)
-            db.hashLineColor = rColor()
-
-            -- Focus cast height
-            db.focusCastHeight = 100 + math.random(0, 4) * 25
-
-            -- Font (pick from fontOrder, skipping separators)
-            local validFonts = {}
-            for _, f in ipairs(fontOrder) do
-                if f ~= "---" then validFonts[#validFonts + 1] = f end
-            end
-            db.font = pick(validFonts)
-
-            -- Class power custom color
-            db.classPowerCustomColor = rColor()
-            db.classPowerBgColor = { r = math.random(), g = math.random(), b = math.random(), a = 0.5 + math.random() * 0.5 }
-            db.classPowerEmptyColor = { r = math.random(), g = math.random(), b = math.random(), a = 0.5 + math.random() * 0.5 }
-
-            -- Colors (merged from Colors tab preset)
-            db.focusColorEnabled = true
-            db.tankHasAggroEnabled = true
-            db.focus = rColor()
-            db.caster = rColor()
-            db.miniboss = rColor()
-            db.enemyInCombat = rColor()
-            db.castBar = rColor()
-            db.interruptReady = rColor()
-            db.castBarUninterruptible = rColor()
-            db.tankHasAggro = rColor()
-            db.tankLosingAggro = rColor()
-            db.tankNoAggro = rColor()
-            db.dpsHasAggro = rColor()
-            db.dpsNearAggro = rColor()
-
-            -- Bar texture overlay
-            local texKeys = {}
-            for _, k in ipairs(ns.healthBarTextureOrder) do
-                if k ~= "---" then texKeys[#texKeys + 1] = k end
-            end
-            db.healthBarTexture = pick(texKeys)
-            db.healthBarTextureClassColor = math.random() > 0.5
-            if not db.healthBarTextureClassColor then
-                db.healthBarTextureColor = rColor()
-            end
-            db.healthBarTextureScale = (math.random(5, 20)) / 10
-            db.healthBarTextureFit = math.random() > 0.3
-        end
-        --]] -- END PRESET SYSTEM DISABLED
-
-        -- Set content header with presets centered above nameplate preview
+        -- Set content header with preview centered above nameplate preview
         _displayHeaderBuilder = function(headerParent, headerW)
-            --[[ Preset system disabled
-            local presetCheckDrift = EllesmereUI:BuildPresetSystem({
-                presetKeys  = displayPresetKeys,
-                dbFunc      = DB,
-                dbValFunc   = DBVal,
-                defaults    = defaults,
-                dbPrefix    = "",
-                randomizeFn = RandomizeDisplaySettings,
-                refreshFn   = function()
-                    ns.RefreshAllSettings()
-                    RefreshAllPlates()
-                    UpdatePreview()
-                    RefreshCoreEyes()
-                end,
-                plateRefreshFn = function()
-                    ns.RefreshAllSettings()
-                end,
-                previewRefreshFn = function()
-                    UpdatePreview()
-                    RefreshCoreEyes()
-                end,
-                headerParent = headerParent,
-                enableSpecFeature = true,
-            })
-            onPresetSettingChanged = presetCheckDrift
-            _displayPresetCheckDrift = presetCheckDrift
-            --]]
 
-            -- No preset controls â€” preview sits at top
             local PRESET_HEADER_H = 0
             local PREVIEW_TOP_PAD = 10
             local PREVIEW_BOTTOM_PAD = 5
@@ -3085,7 +2823,7 @@ initFrame:SetScript("OnEvent", function(self)
         -----------------------------------------------------------------------
         local slotKeys = { "debuffSlot", "buffSlot", "ccSlot", "raidMarkerPos", "classificationSlot" }
 
-        -- Inverted mapping: position â†’ element (for CORE POSITIONS dropdowns)
+        -- Inverted mapping: position Ã¢â€ â€™ element (for CORE POSITIONS dropdowns)
         local elementToKey = {
             debuffs        = "debuffSlot",
             buffs          = "buffSlot",
@@ -3482,7 +3220,7 @@ initFrame:SetScript("OnEvent", function(self)
         local COGS_ICON = EllesmereUI.COGS_ICON
 
         -- opts = { title, xGet, xSet, yGet, ySet, sizeGet, sizeSet, sizeMin, sizeMax, sizeStep, sizeLabel }
-        -- sizeGet may be nil â†’ no size row shown
+        -- sizeGet may be nil Ã¢â€ â€™ no size row shown
         local function ShowCogPopup(anchorBtn, opts)
             if not cogPopup then
                 local SolidTex = EllesmereUI.SolidTex
@@ -4818,7 +4556,7 @@ initFrame:SetScript("OnEvent", function(self)
             return nil
         end
 
-        -- Resolve a dynamic click mapping for icon elements â†’ Core Positions row
+        -- Resolve a dynamic click mapping for icon elements Ã¢â€ â€™ Core Positions row
         local function ResolveCoreMapping(element)
             local pos = FindCorePosForElement(element)
             if not pos then return { section = coreHeader, target = coreRow1 } end
@@ -4827,7 +4565,7 @@ initFrame:SetScript("OnEvent", function(self)
             return { section = coreHeader, target = info.row, slotSide = (info.side == "_leftRegion") and "left" or "right" }
         end
 
-        -- Resolve a dynamic click mapping for text elements â†’ Core Text Positions row
+        -- Resolve a dynamic click mapping for text elements Ã¢â€ â€™ Core Text Positions row
         local function ResolveTextMapping(element)
             local slotKey = FindTextSlotForElement(element)
             if not slotKey then return { section = coreTextHeader, target = textRow1 } end
@@ -4923,8 +4661,8 @@ initFrame:SetScript("OnEvent", function(self)
 
         -- Hit overlay factory for preview elements
         -- opts (optional table):
-        --   hlAnchor     = frame â†’ draw highlight around this frame instead of btn
-        --   hlBehindText = true  â†’ draw highlight on a child frame at icon level + 1
+        --   hlAnchor     = frame Ã¢â€ â€™ draw highlight around this frame instead of btn
+        --   hlBehindText = true  Ã¢â€ â€™ draw highlight on a child frame at icon level + 1
         --                          (text lives on a child frame at icon level + 2)
         local function CreateHitOverlay(element, mappingKey, isText, frameLevelOverride, opts)
             local anchor = isText and element:GetParent() or element
@@ -5046,7 +4784,7 @@ initFrame:SetScript("OnEvent", function(self)
                     end
                 end
             end
-            -- Cast icon overlay (separate from cast bar â€” navigates to Show Spell Icon row)
+            -- Cast icon overlay (separate from cast bar Ã¢â‚¬â€ navigates to Show Spell Icon row)
             local castOverlayLevel
             if pv._cast then
                 castOverlayLevel = pv._cast:GetFrameLevel() + 20
@@ -5134,7 +4872,7 @@ initFrame:SetScript("OnEvent", function(self)
                 classOverlay = CreateHitOverlay(pv._classIcon, "classIcon")
                 if not showClassificationPreview then classOverlay:Hide() end
             end
-            -- Class resource pips â€” wrapper button spanning all visible pips
+            -- Class resource pips Ã¢â‚¬â€ wrapper button spanning all visible pips
             local cpOverlay
             if pv._cpPips then
                 local firstVis, lastVis
@@ -5186,7 +4924,7 @@ initFrame:SetScript("OnEvent", function(self)
             -- Sync overlay visibility with preview toggles
             pv._raidOverlay = raidOverlay
             pv._classOverlay = classOverlay
-            -- Target arrows â€” wrapper button spanning both arrow textures
+            -- Target arrows Ã¢â‚¬â€ wrapper button spanning both arrow textures
             local arrowOverlay
             if pv._arrows then
                 local arrowBtn = CreateFrame("Button", nil, pv)
@@ -5250,7 +4988,7 @@ initFrame:SetScript("OnEvent", function(self)
         return castIconPool[castIconIdx]
     end
 
-    -- Cast fill values: each at least 5% apart, range 40â€“90%
+    -- Cast fill values: each at least 5% apart, range 40Ã¢â‚¬â€œ90%
     local castFillUsed = {}
     local function ResetCastFills()
         for i = #castFillUsed, 1, -1 do castFillUsed[i] = nil end
@@ -5338,7 +5076,7 @@ initFrame:SetScript("OnEvent", function(self)
             bg:SetAllPoints()
             bg:SetColorTexture(0.20, 0.20, 0.20, 1.0)
 
-            -- 1px solid border â€” on a dedicated frame ABOVE the health StatusBar
+            -- 1px solid border Ã¢â‚¬â€ on a dedicated frame ABOVE the health StatusBar
             -- so the border renders on top (child frames cover parent textures).
             -- Parented to container (not health) so it stays at full opacity
             -- when the health bar is dimmed via SetDisabled.
@@ -5535,7 +5273,7 @@ initFrame:SetScript("OnEvent", function(self)
             spark:SetPoint("CENTER", cast:GetStatusBarTexture(), "RIGHT", 0, 0)
             spark:SetBlendMode("ADD")
 
-            -- Cast icon frame (to the left) â€” no border for Colors tab previews
+            -- Cast icon frame (to the left) Ã¢â‚¬â€ no border for Colors tab previews
             local iconFrame = CreateFrame("Frame", nil, cast)
             iconFrame:SetSize(BAR_H + 2, BAR_H + 2)
             iconFrame:SetPoint("RIGHT", cast, "LEFT", 0, 0)
@@ -5726,7 +5464,7 @@ initFrame:SetScript("OnEvent", function(self)
         -- ShuffleCastIcons()  -- disabled: no cast previews on Colors page
         -- ResetCastFills()    -- disabled: no cast previews on Colors page
 
-        --[[ COLOR PRESET SYSTEM (disabled â€” kept for future use)
+        --[[ COLOR PRESET SYSTEM (disabled Ã¢â‚¬â€ kept for future use)
         -- Color preset keys
         local colorPresetKeys = {
             "focusColorEnabled", "focus", "focusOverlayTexture", "focusOverlayAlpha", "focusOverlayColor", "caster", "miniboss", "enemyInCombat",
@@ -5932,7 +5670,7 @@ initFrame:SetScript("OnEvent", function(self)
             cogBtn:EnableMouse(not isFocusTextureNone())
         end
 
-        -- Focus preview bar â€” anchored so its right edge aligns with the
+        -- Focus preview bar Ã¢â‚¬â€ anchored so its right edge aligns with the
         -- Enable Focus Color toggle's right edge (SIDE_PAD = 20 from region edge).
         -- MakeColorPreviewBar positions the bar at -(20+24+27) = -71 to leave room
         -- for a swatch; we override that to -20 since there's no swatch here.
@@ -6202,7 +5940,7 @@ initFrame:SetScript("OnEvent", function(self)
                 RandomizePreviewValues()
                 -- Refresh the preview after cache restore
                 if activePreview and activePreview.Update then activePreview:Update() end
-                -- Refresh hint visibility â€” never recreate here, just show/hide
+                -- Refresh hint visibility Ã¢â‚¬â€ never recreate here, just show/hide
                 local dismissed = IsPreviewHintDismissed()
                 if _previewHintFS then
                     if dismissed then
@@ -6258,7 +5996,7 @@ initFrame:SetScript("OnEvent", function(self)
     })
 
     ---------------------------------------------------------------------------
-    --  Slash command  /enp  â€” opens EllesmereUI to the Nameplates module
+    --  Slash command  /enp  Ã¢â‚¬â€ opens EllesmereUI to the Nameplates module
     ---------------------------------------------------------------------------
     SLASH_ELLESMERENAMEPLATES1 = "/enp"
     SlashCmdList.ELLESMERENAMEPLATES = function(msg)

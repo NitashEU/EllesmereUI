@@ -2,11 +2,14 @@
 ## Title: |cff0cd29fEllesmereUI|r
 ## Notes: Shared framework for the EllesmereUI addon suite
 ## Author: Ellesmere
-## Version: 3.4.5
+## Version: 3.5
 ## SavedVariables: EllesmereUIDB
 ## IconTexture: Interface\AddOns\EllesmereUI\media\eg-logo.tga
 ## X-Curse-Project-ID: 1477613
 ## X-Wago-ID: ZKbxbRN1
+
+# Libraries
+Libs\LibDeflate.lua
 
 # Lightweight addon framework (replaces Ace3)
 EllesmereUI_Lite.lua
@@ -18,6 +21,7 @@ EllesmereUI_Startup.lua
 EllesmereUI.lua
 EllesmereUI_Widgets.lua
 EllesmereUI_Presets.lua
+EllesmereUI_Profiles.lua
 EllesmereUI_PartyMode.lua
 EUI__General_Options.lua
 EUI_UnlockMode.lua
