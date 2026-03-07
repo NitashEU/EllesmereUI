@@ -13,6 +13,9 @@ externals:
   EllesmereUIUnitFrames/Libs/oUF:
     url: https://github.com/oUF-wow/oUF
     tag: latest
+  EllesmereUI/Libs/LibDeflate:
+    url: https://github.com/SafeteeWoW/LibDeflate
+    tag: latest
 
 enable-nolib-creation: no
 

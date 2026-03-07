@@ -9,7 +9,7 @@
 ## X-Wago-ID: ZKbxbRN1
 
 # Libraries
-Libs\LibDeflate.lua
+Libs\LibDeflate\LibDeflate.lua
 
 # Lightweight addon framework (replaces Ace3)
 EllesmereUI_Lite.lua
