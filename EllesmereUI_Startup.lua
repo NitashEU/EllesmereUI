@@ -88,7 +88,7 @@ do
             local scale = EllesmereUIDB.ppUIScale
             if scale then
                 ApplyScaleSafe(scale)
-                C_Timer.After(1, function()
+                C_Timer.After(2, function()
                     if InCombatLockdown() then return end
                     if EllesmereUIDB and EllesmereUIDB.ppUIScale then
                         ApplyScaleSafe(EllesmereUIDB.ppUIScale)
@@ -102,7 +102,11 @@ do
                     end
                 end)
                 -- Second pass: catch any borders created late (e.g. lazy-init frames)
-                C_Timer.After(3, function()
+                C_Timer.After(5, function()
+                    if InCombatLockdown() then return end
+                    if EllesmereUIDB and EllesmereUIDB.ppUIScale then
+                        ApplyScaleSafe(EllesmereUIDB.ppUIScale)
+                    end
                     if EllesmereUI and EllesmereUI.PP and EllesmereUI.PP.ResnapAllBorders then
                         EllesmereUI.PP.ResnapAllBorders()
                     end

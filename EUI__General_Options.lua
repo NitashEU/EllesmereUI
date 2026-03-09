@@ -22,6 +22,10 @@ local PAGE_CORE        = "Quick Setup"
 local PAGE_COLORS      = "Fonts & Colors"
 local PAGE_PROFILES    = "Profiles"
 
+-- CDM Layout import pending state (persists across page rebuilds)
+local _cdmPendingLayout = nil
+local _cdmMissingSpells = nil
+
 -------------------------------------------------------------------------------
 --  FCT font — handled by EllesmereUI_Startup.lua which runs earlier.
 -------------------------------------------------------------------------------
@@ -503,7 +507,7 @@ initFrame:SetScript("OnEvent", function(self)
         --  Optimized graphics CVar table + buttons (above all sections)
         -------------------------------------------------------------------
         local OPTIMIZED_CVARS = {
-            { "graphicsShadowQuality",      "0" },
+            { "graphicsShadowQuality",      "1" },
             { "graphicsLiquidDetail",       "0" },
             { "graphicsParticleDensity",    "5" },
             { "graphicsSSAO",              "0" },
@@ -621,7 +625,7 @@ initFrame:SetScript("OnEvent", function(self)
                 EllesmereUI:ShowInfoPopup({
                     title = "FPS & Graphics Optimization",
                     content = "This feature optimizes your in-game graphics settings to give you the best combination of high FPS and visual clarity.\n\nYou can revert all changes at any time by clicking \"Restore My Settings\" which will appear after optimizing.\n\n\nWhat we change:\n\n"
-                        .. "Shadow Quality - Disabled (large FPS gain)\n"
+                        .. "Shadow Quality - Fair (balanced quality/FPS)\n"
                         .. "Liquid Detail - Disabled\n"
                         .. "Particle Density - Set to Ultra (keeps important spell effects)\n"
                         .. "SSAO (Ambient Occlusion) - Disabled\n"
@@ -3351,6 +3355,172 @@ initFrame:SetScript("OnEvent", function(self)
             end
         end
 
+        -------------------------------------------------------------------
+        --  CDM LAYOUT PROFILES section
+        -------------------------------------------------------------------
+        if C_AddOns.IsAddOnLoaded("EllesmereUICooldownManager") then
+            _, h = W:SectionHeader(parent, "CDM LAYOUT PROFILES", y);  y = y - h
+
+            -- Export CDM layout button
+            _, h = W:WideButton(parent, "Export CDM Layout", y, function()
+                local str, err = EllesmereUI.ExportCDMLayout()
+                if str then
+                    EllesmereUI:ShowExportPopup(str)
+                else
+                    EllesmereUI:ShowInfoPopup({
+                        title = "Export Failed",
+                        content = err or "Unknown error",
+                    })
+                end
+            end);  y = y - h
+
+            -- Import CDM layout button
+            _, h = W:WideButton(parent, "Import CDM Layout", y, function()
+                EllesmereUI:ShowImportPopup(function(importStr)
+                    local layoutData, err = EllesmereUI.DecodeCDMLayoutString(importStr)
+                    if not layoutData then
+                        EllesmereUI:ShowInfoPopup({
+                            title = "Import Failed",
+                            content = err or "Unknown error",
+                        })
+                        return
+                    end
+
+                    -- Analyze which spells are missing
+                    local missing, allPresent = EllesmereUI.AnalyzeCDMLayoutSpells(layoutData)
+
+                    if allPresent then
+                        -- All spells tracked, apply immediately
+                        local ok, applyErr = EllesmereUI.ApplyCDMLayout(layoutData)
+                        if ok then
+                            print("|cff0cd29fEllesmereUI|r: CDM layout imported successfully. /reload to apply.")
+                            EllesmereUI:ShowInfoPopup({
+                                title = "CDM Layout Imported",
+                                content = "Layout applied successfully.\n\nPlease /reload to see the changes.",
+                            })
+                        else
+                            EllesmereUI:ShowInfoPopup({
+                                title = "Import Failed",
+                                content = applyErr or "Unknown error",
+                            })
+                        end
+                    else
+                        -- Missing spells: print to chat and store pending
+                        _cdmPendingLayout = layoutData
+                        _cdmMissingSpells = missing
+                        EllesmereUI.PrintCDMLayoutMissingSpells(missing)
+                        EllesmereUI:ShowInfoPopup({
+                            title = "Spells Required",
+                            content = #missing .. " spell(s) need to be enabled in CDM before this layout can be imported.\n\n"
+                                .. "Check your chat window for the full list of required spells.\n\n"
+                                .. "Enable them in CDM Cooldowns/Utility/Buffs settings, then click \"Apply Pending CDM Layout\" below.",
+                        })
+                        EllesmereUI:RefreshPage()
+                    end
+                end)
+            end);  y = y - h
+
+            -- "Apply Pending CDM Layout" button (only visible when there's a pending import)
+            if _cdmPendingLayout then
+                _, h = W:WideButton(parent, "Apply Pending CDM Layout", y, function()
+                    if not _cdmPendingLayout then return end
+
+                    -- Re-check missing spells
+                    local missing, allPresent = EllesmereUI.AnalyzeCDMLayoutSpells(_cdmPendingLayout)
+
+                    if allPresent then
+                        local ok, applyErr = EllesmereUI.ApplyCDMLayout(_cdmPendingLayout)
+                        if ok then
+                            _cdmPendingLayout = nil
+                            _cdmMissingSpells = nil
+                            print("|cff0cd29fEllesmereUI|r: CDM layout imported successfully. /reload to apply.")
+                            EllesmereUI:ShowInfoPopup({
+                                title = "CDM Layout Imported",
+                                content = "Layout applied successfully.\n\nPlease /reload to see the changes.",
+                            })
+                            EllesmereUI:RefreshPage()
+                        else
+                            EllesmereUI:ShowInfoPopup({
+                                title = "Import Failed",
+                                content = applyErr or "Unknown error",
+                            })
+                        end
+                    else
+                        -- Still missing spells
+                        _cdmMissingSpells = missing
+                        EllesmereUI.PrintCDMLayoutMissingSpells(missing)
+                        EllesmereUI:ShowInfoPopup({
+                            title = "Still Missing Spells",
+                            content = #missing .. " spell(s) still need to be enabled.\n\nCheck chat for the updated list.",
+                        })
+                    end
+                end);  y = y - h
+
+                -- "Re-check Spells" button
+                _, h = W:WideButton(parent, "Re-check Required Spells", y, function()
+                    if not _cdmPendingLayout then return end
+                    local missing, allPresent = EllesmereUI.AnalyzeCDMLayoutSpells(_cdmPendingLayout)
+                    _cdmMissingSpells = missing
+                    EllesmereUI.PrintCDMLayoutMissingSpells(missing)
+                    if allPresent then
+                        EllesmereUI:ShowInfoPopup({
+                            title = "All Spells Ready",
+                            content = "All required spells are now tracked. Click \"Apply Pending CDM Layout\" to finish the import.",
+                        })
+                    end
+                end);  y = y - h
+
+                -- "Cancel Pending Import" button
+                _, h = W:WideButton(parent, "Cancel Pending Import", y, function()
+                    _cdmPendingLayout = nil
+                    _cdmMissingSpells = nil
+                    print("|cff0cd29fEllesmereUI|r: CDM layout import cancelled.")
+                    EllesmereUI:RefreshPage()
+                end);  y = y - h
+            end
+
+            -- "How does this work?" link for CDM layouts
+            do
+                local ROW_H = 30
+                local infoFrame = CreateFrame("Frame", nil, parent)
+                local totalW = parent:GetWidth() - EllesmereUI.CONTENT_PAD * 2
+                PP.Size(infoFrame, totalW, ROW_H)
+                PP.Point(infoFrame, "TOPLEFT", parent, "TOPLEFT", EllesmereUI.CONTENT_PAD, y)
+
+                local infoBtn = CreateFrame("Button", nil, infoFrame)
+                infoBtn:SetFrameLevel(infoFrame:GetFrameLevel() + 1)
+                local infoFS = infoBtn:CreateFontString(nil, "OVERLAY")
+                infoFS:SetFont(FONT, 12, EllesmereUI.GetFontOutlineFlag())
+                infoFS:SetTextColor(EG.r, EG.g, EG.b, 0.70)
+                infoFS:SetText("How does this work?")
+                infoFS:SetPoint("CENTER")
+                infoBtn:SetSize(infoFS:GetStringWidth() + 10, 18)
+                PP.Point(infoBtn, "LEFT", infoFrame, "LEFT", 0, 0)
+                infoBtn:SetScript("OnEnter", function()
+                    infoFS:SetTextColor(EG.r, EG.g, EG.b, 1)
+                end)
+                infoBtn:SetScript("OnLeave", function()
+                    infoFS:SetTextColor(EG.r, EG.g, EG.b, 0.70)
+                end)
+                infoBtn:SetScript("OnClick", function()
+                    EllesmereUI:ShowInfoPopup({
+                        title = "CDM Layout Profiles",
+                        content = "CDM Layout Profiles let you share which abilities are assigned to which CDM bars, separate from your visual settings.\n\n"
+                            .. "WHAT'S INCLUDED\n"
+                            .. "Spell assignments for all CDM bars (Cooldowns, Utility, Buffs, and custom bars), plus tracked buff bar spell assignments.\n\n"
+                            .. "WHAT'S NOT INCLUDED\n"
+                            .. "Visual styling (icon size, borders, colors, shapes), bar positions, bar glows, and all other appearance settings. Those stay in your main profile.\n\n"
+                            .. "IMPORTING\n"
+                            .. "When you import a CDM layout, the system checks which spells need to be tracked in CDM. "
+                            .. "If any spells are missing, they'll be listed in chat. Enable them in CDM settings first, then apply the layout.\n\n"
+                            .. "This is spec-specific. Export from the spec you want to share, and import on the spec you want to apply it to.",
+                    })
+                end)
+
+                y = y - ROW_H
+            end
+        end
+
         return math.abs(y)
     end
 
@@ -3358,8 +3528,8 @@ initFrame:SetScript("OnEvent", function(self)
     --  Enabled Addons page
     ---------------------------------------------------------------------------
 
-    local disabledList = { PAGE_CORE, PAGE_PROFILES }
-    local disabledTips = { [PAGE_CORE] = "Coming Soon", [PAGE_PROFILES] = "Coming Soon" }
+    local disabledList = { PAGE_CORE }
+    local disabledTips = { [PAGE_CORE] = "Coming Soon" }
 
     EllesmereUI:RegisterModule(GLOBAL_KEY, {
         title       = "Global Settings",
@@ -3405,6 +3575,7 @@ initFrame:SetScript("OnEvent", function(self)
                 EllesmereUIDB.errorSound = false
                 EllesmereUIDB.showSpellID = false
                 EllesmereUIDB.suppressErrors = true
+                EllesmereUIDB.crosshairSize = "None"
             end
             if EllesmereUI._applyRightClickTarget then
                 EllesmereUI._applyRightClickTarget()

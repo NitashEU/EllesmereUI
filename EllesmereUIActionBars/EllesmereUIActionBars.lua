@@ -1,4 +1,4 @@
--------------------------------------------------------------------------------
+﻿-------------------------------------------------------------------------------
 --  EllesmereUIActionBars.lua  Custom Action Bars (full rewrite)
 --
 --  Creates its own secure action bar frames and buttons instead of hooking
@@ -257,6 +257,8 @@ for _, info in ipairs(BAR_CONFIG) do
         alwaysShowButtons = true,
         bgEnabled = false,
         bgColor = { r = 0, g = 0, b = 0, a = 0.5 },
+        outOfRangeColoring = false,
+        outOfRangeColor = { r = 0.8, g = 0.1, b = 0.1 },
         buttonShape = "none",
         shapeBorderEnabled = true,
         shapeBorderColor = { r = 0, g = 0, b = 0, a = 1 },
@@ -744,7 +746,7 @@ local function HideBlizzardBars()
     -- Blizzard's vehicle bar can render.  Combat-safe via attribute driver.
     if ActionBarParent then
         RegisterAttributeDriver(ActionBarParent, "state-visibility",
-            "[vehicleui] show; hide")
+            "[vehicleui][overridebar] show; hide")
     end
     -- Let Blizzard's OverrideActionBar show itself for override bars and
     -- skinned vehicles (quest mini-vehicles, encounter abilities, etc.).
@@ -752,7 +754,7 @@ local function HideBlizzardBars()
     -- Combat-safe via attribute driver -- no direct Hide() calls.
     if OverrideActionBar then
         RegisterAttributeDriver(OverrideActionBar, "state-visibility",
-            "[vehicleui] show; hide")
+            "[vehicleui][overridebar] show; hide")
     end
     -- Wipe Blizzard's actionButtons tables so they don't interfere
     for _, name in ipairs({"MainActionBar", "MainMenuBar", "MultiBarBottomLeft", "MultiBarBottomRight", "MultiBarRight", "MultiBarLeft", "MultiBar5", "MultiBar6", "MultiBar7"}) do
@@ -1830,10 +1832,12 @@ local function SetupBar(info, skipProtected)
 
     -- Store original button size before any shape/scale modifications.
     -- StanceButtons and PetActionButtons are 30x30; action buttons are 45x45.
+    -- Round to nearest integer to eliminate floating-point noise from Blizzard's
+    -- scaling — the intended sizes are always whole numbers.
     local btn1 = buttons[1]
     barBaseSize[key] = {
-        w = btn1 and btn1:GetWidth() or 45,
-        h = btn1 and btn1:GetHeight() or 45,
+        w = math.floor((btn1 and btn1:GetWidth() or 45) + 0.5),
+        h = math.floor((btn1 and btn1:GetHeight() or 45) + 0.5),
     }
 
     return frame, buttons
@@ -2008,13 +2012,14 @@ end
 -------------------------------------------------------------------------------
 --  Layout Engine â€” positions buttons in a grid
 -------------------------------------------------------------------------------
--- Snap a value to the nearest physical pixel at a given frame scale
+-- Snap a value to a whole number of physical pixels at the bar's effective scale.
+-- Uses the same approach as the border system: convert to physical pixels,
+-- round to nearest integer, convert back. Every element ends up exactly N
+-- physical pixels, eliminating sub-pixel drift between siblings.
 local function SnapForScale(x, barScale)
     if x == 0 then return 0 end
-    local m = PP.perfect / ((UIParent:GetScale() or 1) * (barScale or 1))
-    if m == 1 then return x end
-    local y = m > 1 and m or -m
-    return x - x % (x < 0 and y or -y)
+    local es = (UIParent:GetScale() or 1) * (barScale or 1)
+    return PP.SnapForES(x, es)
 end
 
 
@@ -2097,8 +2102,8 @@ local function ComputeBarLayout(key)
 
     local totalCols = isVertical and numRows or stride
     local totalRows = isVertical and stride or numRows
-    local frameW = totalCols * btnW + (totalCols - 1) * padding
-    local frameH = totalRows * btnH + (totalRows - 1) * padding
+    local frameW = SnapForScale(totalCols * btnW + (totalCols - 1) * padding, barScale)
+    local frameH = SnapForScale(totalRows * btnH + (totalRows - 1) * padding, barScale)
     return result, max(frameW, 1), max(frameH, 1)
 end
 
@@ -2204,6 +2209,24 @@ local function LayoutBar(key)
     local frameW = totalCols * btnW + (totalCols - 1) * padding
     local frameH = totalRows * btnH + (totalRows - 1) * padding
     frame:SetSize(max(frameW, 1), max(frameH, 1))
+
+    -- Set flyoutDirection on every button based on bar orientation and screen position.
+    -- Vertical bars: expand left if bar is on the right half, else right.
+    -- Horizontal bars: expand down if bar is on the top half, else up.
+    local flyDir
+    local pos = EAB.db.profile.barPositions[key]
+    local relPoint = pos and pos.relPoint or "CENTER"
+    if isVertical then
+        flyDir = relPoint:match("RIGHT") and "LEFT" or "RIGHT"
+    else
+        flyDir = relPoint:match("TOP") and "DOWN" or "UP"
+    end
+    for i = 1, #buttons do
+        local btn = buttons[i]
+        if btn and not InCombatLockdown() then
+            btn:SetAttribute("flyoutDirection", flyDir)
+        end
+    end
 end
 
 -------------------------------------------------------------------------------
@@ -2333,7 +2356,6 @@ local function MakeButtonSquare(btn)
             local bg = btn:CreateTexture(nil, "BACKGROUND", nil, -1)
             bg:SetAllPoints(btn)
             bg:SetColorTexture(0.15, 0.15, 0.15, 0.5)
-            if PP then PP.DisablePixelSnap(bg) end
             btn._eabSlotBG = bg
         end
     end
@@ -3116,6 +3138,207 @@ function EAB:ApplyAlwaysShowButtons(barKey)
 end
 
 -------------------------------------------------------------------------------
+--  Out-of-Range Icon Coloring
+--
+--  Uses the retail ACTION_RANGE_CHECK_UPDATE event to tint action button
+--  icons when the target is out of range.  Each slot is opted-in via
+--  C_ActionBar.EnableActionRangeCheck so the client fires the event only
+--  for slots we care about.
+-------------------------------------------------------------------------------
+local _rangeSlots = {}          -- [actionSlot] = true  (slots with range checking enabled)
+local _rangeOutOfRange = {}     -- [actionSlot] = true  (currently out of range)
+local _rangeEventFrame          -- lazy-created event frame
+
+-- Resolve the action slot for a button (handles paging for MainBar)
+local function GetButtonActionSlot(btn)
+    if not btn then return nil end
+    local action = btn.action
+    if action and type(action) == "number" and action > 0 then return action end
+    return nil
+end
+
+-- Apply or remove the range tint on a single button
+local function ApplyRangeTint(btn, outOfRange, barSettings)
+    local ico = btn.icon or btn.Icon
+    if not ico then return end
+    if outOfRange and barSettings.outOfRangeColoring then
+        local c = barSettings.outOfRangeColor or { r = 0.8, g = 0.1, b = 0.1 }
+        ico:SetVertexColor(c.r, c.g, c.b)
+        btn._eabRangeTinted = true
+    elseif btn._eabRangeTinted then
+        ico:SetVertexColor(1, 1, 1)
+        btn._eabRangeTinted = nil
+    end
+end
+
+-- Enable range checking for all active button slots on a bar
+local function EnableRangeCheckForBar(barKey)
+    local buttons = barButtons[barKey]
+    if not buttons then return end
+    local s = EAB.db.profile.bars[barKey]
+    if not s or not s.outOfRangeColoring then return end
+    for _, btn in ipairs(buttons) do
+        local slot = GetButtonActionSlot(btn)
+        if slot and not _rangeSlots[slot] then
+            _rangeSlots[slot] = true
+            if C_ActionBar and C_ActionBar.EnableActionRangeCheck then
+                pcall(C_ActionBar.EnableActionRangeCheck, slot, true)
+            end
+        end
+    end
+end
+
+-- Disable range checking for all slots on a bar and clear tints
+local function DisableRangeCheckForBar(barKey)
+    local buttons = barButtons[barKey]
+    if not buttons then return end
+    local s = EAB.db.profile.bars[barKey]
+    for _, btn in ipairs(buttons) do
+        local slot = GetButtonActionSlot(btn)
+        if slot and _rangeSlots[slot] then
+            _rangeSlots[slot] = nil
+            _rangeOutOfRange[slot] = nil
+            if C_ActionBar and C_ActionBar.EnableActionRangeCheck then
+                pcall(C_ActionBar.EnableActionRangeCheck, slot, false)
+            end
+        end
+        if btn._eabRangeTinted then
+            local ico = btn.icon or btn.Icon
+            if ico then ico:SetVertexColor(1, 1, 1) end
+            btn._eabRangeTinted = nil
+        end
+    end
+end
+
+-- Refresh range state for all bars (called from ApplyAll and on setting change)
+function EAB:ApplyRangeColoring()
+    for _, info in ipairs(BAR_CONFIG) do
+        local key = info.key
+        local s = self.db.profile.bars[key]
+        if s and s.outOfRangeColoring then
+            EnableRangeCheckForBar(key)
+        else
+            DisableRangeCheckForBar(key)
+        end
+    end
+
+    -- Hook Blizzard's usability update so our range tint is re-applied
+    -- after Blizzard resets the icon vertex color.
+    for _, info in ipairs(BAR_CONFIG) do
+        local btns = barButtons[info.key]
+        if btns then
+            for _, btn in ipairs(btns) do
+                if not btn._eabRangeHooked and btn.UpdateUsable then
+                    btn._eabRangeHooked = true
+                    hooksecurefunc(btn, "UpdateUsable", function(self)
+                        if not self._eabRangeTinted then return end
+                        local slot = GetButtonActionSlot(self)
+                        if slot and _rangeOutOfRange[slot] then
+                            local s
+                            for _, inf in ipairs(BAR_CONFIG) do
+                                local bs = barButtons[inf.key]
+                                if bs then
+                                    for _, b in ipairs(bs) do
+                                        if b == self then s = EAB.db.profile.bars[inf.key]; break end
+                                    end
+                                end
+                                if s then break end
+                            end
+                            if s and s.outOfRangeColoring then
+                                ApplyRangeTint(self, true, s)
+                            end
+                        end
+                    end)
+                end
+            end
+        end
+    end
+    -- Set up the event listener if not already created
+    if not _rangeEventFrame then
+        _rangeEventFrame = CreateFrame("Frame")
+        _rangeEventFrame:RegisterEvent("ACTION_RANGE_CHECK_UPDATE")
+        _rangeEventFrame:RegisterEvent("ACTIONBAR_SLOT_CHANGED")
+        _rangeEventFrame:RegisterEvent("ACTIONBAR_PAGE_CHANGED")
+        _rangeEventFrame:RegisterEvent("ACTION_USABLE_CHANGED")
+        _rangeEventFrame:SetScript("OnEvent", function(_, event, slot, inRange, checksRange)
+            if event == "ACTION_RANGE_CHECK_UPDATE" then
+                if not _rangeSlots[slot] then return end
+                local wasOut = _rangeOutOfRange[slot]
+                local isOut = checksRange and not inRange
+                if isOut then
+                    _rangeOutOfRange[slot] = true
+                else
+                    _rangeOutOfRange[slot] = nil
+                end
+                -- Only update visuals when state actually changes
+                if (wasOut ~= nil) == (isOut) then return end
+                for _, info in ipairs(BAR_CONFIG) do
+                    local btns = barButtons[info.key]
+                    local s = EAB.db.profile.bars[info.key]
+                    if btns and s and s.outOfRangeColoring then
+                        for _, btn in ipairs(btns) do
+                            if GetButtonActionSlot(btn) == slot then
+                                ApplyRangeTint(btn, isOut, s)
+                            end
+                        end
+                    end
+                end
+            elseif event == "ACTIONBAR_SLOT_CHANGED" then
+                -- When a slot changes (paging, drag, etc.), re-enable range
+                -- checking for the new action and clear stale tint
+                if slot and _rangeSlots[slot] then
+                    _rangeOutOfRange[slot] = nil
+                    if C_ActionBar and C_ActionBar.EnableActionRangeCheck then
+                        pcall(C_ActionBar.EnableActionRangeCheck, slot, true)
+                    end
+                end
+                -- Re-enable for any new slots that appeared
+                for _, info in ipairs(BAR_CONFIG) do
+                    local s = EAB.db.profile.bars[info.key]
+                    if s and s.outOfRangeColoring then
+                        EnableRangeCheckForBar(info.key)
+                    end
+                end
+            elseif event == "ACTIONBAR_PAGE_CHANGED" then
+                -- Page changed: clear all range state and re-enable for new slots
+                wipe(_rangeOutOfRange)
+                for _, info in ipairs(BAR_CONFIG) do
+                    local s = EAB.db.profile.bars[info.key]
+                    if s and s.outOfRangeColoring then
+                        local btns = barButtons[info.key]
+                        if btns then
+                            for _, btn in ipairs(btns) do
+                                if btn._eabRangeTinted then
+                                    local ico = btn.icon or btn.Icon
+                                    if ico then ico:SetVertexColor(1, 1, 1) end
+                                    btn._eabRangeTinted = nil
+                                end
+                            end
+                        end
+                        EnableRangeCheckForBar(info.key)
+                    end
+                end
+            elseif event == "ACTION_USABLE_CHANGED" then
+                -- Blizzard resets icon vertex colors on usability changes;
+                -- re-apply range tint on any out-of-range buttons.
+                for _, info in ipairs(BAR_CONFIG) do
+                    local btns = barButtons[info.key]
+                    local s = EAB.db.profile.bars[info.key]
+                    if btns and s and s.outOfRangeColoring then
+                        for _, btn in ipairs(btns) do
+                            local bSlot = GetButtonActionSlot(btn)
+                            if bSlot and _rangeOutOfRange[bSlot] then
+                                ApplyRangeTint(btn, true, s)
+                            end
+                        end
+                    end
+                end
+            end
+        end)
+    end
+end
+
+-------------------------------------------------------------------------------
 --  Mouseover Fade System
 -------------------------------------------------------------------------------
 local hoverStates = {}  -- [barKey] = { frame=, buttons=, isHovered=false }
@@ -3250,6 +3473,124 @@ function EAB:RefreshMouseover()
 end
 
 -------------------------------------------------------------------------------
+--  Visibility Condition Builder
+--  Generates the correct macro condition string for RegisterStateDriver
+--  based on bar type and user settings (combat show/hide).
+--
+--  Bar type rules:
+--    MainBar (bar 1):  Stays visible during vehicle/override (paging handles
+--                      showing the correct actions).  Hides during pet battle.
+--    Bars 2-8:         Hide during vehicle UI, pet battle, and override bar
+--                      (only bar 1 pages to show override/vehicle actions).
+--    StanceBar:        Hide during vehicle UI and pet battle.
+--    PetBar:           Hide during pet battle.  Only show when the player has
+--                      a pet and is not in a vehicle/override/possess state.
+-------------------------------------------------------------------------------
+local function BuildVisibilityString(info, s)
+    local key = info.key
+
+    -- Pet bar has unique logic: it only shows when a pet is active and
+    -- the player is not in a vehicle/override/possess state.
+    if info.isPetBar then
+        local petShow
+        if s.combatShowEnabled then
+            petShow = "[combat] show; hide"
+        elseif s.combatHideEnabled then
+            petShow = "[combat] hide; show"
+        else
+            petShow = "show"
+        end
+        return "[petbattle] hide; [novehicleui,pet,nooverridebar,nopossessbar] " .. petShow .. "; hide"
+    end
+
+    -- Build the hide-prefix based on bar type
+    local hidePrefix
+    if key == "MainBar" then
+        -- MainBar pages to vehicle/override actions -- only hide for pet battle
+        hidePrefix = "[petbattle] hide; "
+    elseif info.isStance then
+        -- Stance bar: hide in vehicles and pet battles
+        hidePrefix = "[vehicleui][petbattle] hide; "
+    else
+        -- All other action bars (2-8): hide in vehicles, pet battles, and
+        -- override bar (only bar 1 pages to show those actions)
+        hidePrefix = "[vehicleui][petbattle][overridebar] hide; "
+    end
+
+    -- Append combat conditions
+    if s.combatShowEnabled then
+        return hidePrefix .. "[combat] show; hide"
+    elseif s.combatHideEnabled then
+        return hidePrefix .. "[combat] hide; show"
+    end
+    return hidePrefix .. "show"
+end
+
+-------------------------------------------------------------------------------
+--  Extra Bar Visibility (Pet Battle / Vehicle Hiding)
+--  MicroBar, BagBar, data bars, and Blizzard movable frames are not
+--  SecureHandlerStateTemplate frames, so we use a single secure proxy
+--  frame that monitors [petbattle] and [vehicleui] conditions and calls
+--  methods to show/hide the extra bar frames.
+-------------------------------------------------------------------------------
+local _extraBarVisProxy  -- created once, reused
+
+function EAB:ApplyExtraBarVisibility()
+    if not _extraBarVisProxy then
+        _extraBarVisProxy = CreateFrame("Frame", nil, UIParent, "SecureHandlerStateTemplate")
+        _extraBarVisProxy:SetAttribute("_onstate-extravis", [[
+            self:CallMethod("OnExtraVisChanged", newstate)
+        ]])
+        _extraBarVisProxy.OnExtraVisChanged = function(_, state)
+            -- state is "hide" during pet battle, "show" otherwise
+            local shouldHide = (state == "hide")
+            for _, info in ipairs(EXTRA_BARS) do
+                local key = info.key
+                local s = EAB.db and EAB.db.profile.bars[key]
+                if s and not s.alwaysHidden then
+                    local frame
+                    if info.isDataBar then
+                        frame = dataBarFrames[key]
+                    elseif info.isBlizzardMovable then
+                        frame = blizzMovableHolders[key]
+                    else
+                        -- MicroBar, BagBar: hide the Blizzard frame directly
+                        frame = _G[info.frameName]
+                    end
+                    if frame then
+                        if shouldHide then
+                            frame:Hide()
+                        else
+                            frame:Show()
+                            -- Restore correct alpha: mouseover bars fade to 0 when not hovered,
+                            -- so Show() alone leaves them invisible after a pet battle ends.
+                            if s.mouseoverEnabled then
+                                local hstate = hoverStates[key]
+                                local isHovered = hstate and hstate.isHovered
+                                if not isHovered then
+                                    frame:SetAlpha(0)
+                                else
+                                    frame:SetAlpha(s.mouseoverAlpha or 1)
+                                end
+                            else
+                                frame:SetAlpha(s.mouseoverAlpha or 1)
+                            end
+                            -- Data bars may need to re-evaluate (XP at max, etc.)
+                            if info.isDataBar then
+                                local df = dataBarFrames[key]
+                                if df and df._updateFunc then df._updateFunc() end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    -- Register the state driver: hide during pet battle, show otherwise
+    RegisterStateDriver(_extraBarVisProxy, "extravis", "[petbattle] hide; show")
+end
+
+-------------------------------------------------------------------------------
 --  Combat Show/Hide, Always Hidden, Click-Through, Housing
 -------------------------------------------------------------------------------
 function EAB:ApplyCombatVisibility()
@@ -3259,25 +3600,19 @@ function EAB:ApplyCombatVisibility()
         if not s then break end
         local frame = barFrames[key] or (info.isDataBar and dataBarFrames[key]) or (info.isBlizzardMovable and blizzMovableHolders[key]) or (extraBarHolders[key]) or (info.visibilityOnly and _G[info.frameName])
         if frame and not info.visibilityOnly then
-            -- Always-hidden bars: no attribute driver at all â€” ApplyAlwaysHidden
+            -- Always-hidden bars: no attribute driver -- ApplyAlwaysHidden
             -- owns their visibility entirely.
             if s.alwaysHidden then
                 UnregisterAttributeDriver(frame, "state-visibility")
             else
-                -- Hide during full vehicle UI so Blizzard's vehicle bar shows.
-                -- Override bar (quest mini-vehicles) pages bar 1 to show
-                -- override actions â€” no need to hide.
-                local vehiclePrefix = "[vehicleui] hide; "
-                if s.combatShowEnabled then
-                    RegisterAttributeDriver(frame, "state-visibility", vehiclePrefix .. "[combat] show; hide")
-                elseif s.combatHideEnabled then
-                    RegisterAttributeDriver(frame, "state-visibility", vehiclePrefix .. "[combat] hide; show")
-                else
-                    RegisterAttributeDriver(frame, "state-visibility", vehiclePrefix .. "show")
-                end
+                RegisterAttributeDriver(frame, "state-visibility", BuildVisibilityString(info, s))
             end
         end
     end
+    -- Apply pet battle / vehicle hiding for extra bars (MicroBar, BagBar,
+    -- data bars).  These use a dedicated secure proxy since they are not
+    -- SecureHandlerStateTemplate frames themselves.
+    self:ApplyExtraBarVisibility()
 end
 
 function EAB:ApplyAlwaysHidden()
@@ -3298,17 +3633,9 @@ function EAB:ApplyAlwaysHidden()
                 SafeEnableMouse(frame, false)
             else
                 -- Re-register the attribute driver so combat visibility and
-                -- vehicle hide work again.  This mirrors ApplyCombatVisibility
-                -- logic so the two functions stay in sync.
+                -- vehicle/pet battle/override hiding work again.
                 if not info.visibilityOnly and not InCombatLockdown() then
-                    local vehiclePrefix = "[vehicleui] hide; "
-                    if s.combatShowEnabled then
-                        RegisterAttributeDriver(frame, "state-visibility", vehiclePrefix .. "[combat] show; hide")
-                    elseif s.combatHideEnabled then
-                        RegisterAttributeDriver(frame, "state-visibility", vehiclePrefix .. "[combat] hide; show")
-                    else
-                        RegisterAttributeDriver(frame, "state-visibility", vehiclePrefix .. "show")
-                    end
+                    RegisterAttributeDriver(frame, "state-visibility", BuildVisibilityString(info, s))
                 end
                 if not s.combatShowEnabled then
                     frame:Show()
@@ -3328,6 +3655,7 @@ function EAB:ApplyAlwaysHidden()
         end
     end
 end
+
 
 function EAB:ApplySmartNumIcons(barKey)
     -- Only applies to action bars 1-8 (not stance/pet/extra bars)
@@ -4519,6 +4847,7 @@ local function ApplyAll()
     if not inCombat then EAB:ApplyAlwaysHidden() end
     EAB:RefreshMouseover()
     EAB:RefreshProcGlows()
+    EAB:ApplyRangeColoring()
 end
 
 -------------------------------------------------------------------------------
@@ -4903,10 +5232,10 @@ function EAB:FinishSetup()
             end
             if MainMenuBarPageNumber then MainMenuBarPageNumber:Hide() end
             if ActionBarParent then
-                RegisterAttributeDriver(ActionBarParent, "state-visibility", "[vehicleui] show; hide")
+                RegisterAttributeDriver(ActionBarParent, "state-visibility", "[vehicleui][overridebar] show; hide")
             end
             if OverrideActionBar then
-                RegisterAttributeDriver(OverrideActionBar, "state-visibility", "[vehicleui] show; hide")
+                RegisterAttributeDriver(OverrideActionBar, "state-visibility", "[vehicleui][overridebar] show; hide")
             end
             for _, name in ipairs({"MainActionBar", "MainMenuBar", "MultiBarBottomLeft", "MultiBarBottomRight", "MultiBarRight", "MultiBarLeft", "MultiBar5", "MultiBar6", "MultiBar7"}) do
                 local bar = _G[name]
@@ -5289,6 +5618,14 @@ function EAB:FinishSetup()
             if InCombatLockdown() then return end
             LayoutBar("PetBar")
             self:ApplyAlwaysShowButtons("PetBar")
+            -- Re-register the state driver so the [pet] condition is always
+            -- current after a pet summon, swap, or dismissal.
+            local petInfo = BAR_LOOKUP["PetBar"]
+            local petFrame = barFrames["PetBar"]
+            local petS = self.db.profile.bars["PetBar"]
+            if petInfo and petFrame and petS and not petS.alwaysHidden then
+                RegisterAttributeDriver(petFrame, "state-visibility", BuildVisibilityString(petInfo, petS))
+            end
         end)
     end
     local _petEventFrame = CreateFrame("Frame")
@@ -5434,7 +5771,6 @@ local function CreateDataBarFrame(barKey, updateFunc)
     bar:SetMinMaxValues(0, 1)
     bar:SetValue(0)
     bar:GetStatusBarTexture():SetDrawLayer("ARTWORK", 4)
-    if PP then PP.DisablePixelSnap(bar:GetStatusBarTexture()) end
 
     local text = bar:CreateFontString(nil, "OVERLAY")
     text:SetFont(FONT_PATH, 9, GetEABOutline())
@@ -5514,7 +5850,6 @@ local function CreateXPBar()
     local PP = EllesmereUI and EllesmereUI.PP
     if PP then
         PP.SetInside(restedBar, holder, 1, 1)
-        PP.DisablePixelSnap(restedBar:GetStatusBarTexture())
     else
         restedBar:SetPoint("TOPLEFT", 1, -1)
         restedBar:SetPoint("BOTTOMRIGHT", -1, 1)

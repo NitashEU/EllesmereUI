@@ -3327,7 +3327,7 @@ initFrame:SetScript("OnEvent", function(self)
                     px = startX + col * (iconSize + spacing)
                 end
                 local py = startY - row * (iconH + spacing)
-                frame:SetSize(iconSize, iconH); frame:ClearAllPoints()
+                PP.Size(frame, iconSize, iconH); frame:ClearAllPoints()
                 PP.Point(frame, "TOPLEFT", self, "TOPLEFT", px, py)
                 frame._baseX = px
                 frame._baseY = py
@@ -3473,9 +3473,8 @@ initFrame:SetScript("OnEvent", function(self)
             -- "+" button: always at the far right (its own column, not mirrored)
             local addPx = startX + stride * (iconSize + spacing)
             local addPy = startY - (numRows - 1) * (iconH + spacing)
-            addBtn:SetSize(iconSize, iconH); addBtn:ClearAllPoints()
+            PP.Size(addBtn, iconSize, iconH); addBtn:ClearAllPoints()
             PP.Point(addBtn, "TOPLEFT", self, "TOPLEFT", addPx, addPy)
-            addBtn:SetSize(iconSize, iconH)
             if addBtn._ppBorders then PP.SetBorderSize(addBtn, 1) end
             local ar, ag, ab = EllesmereUI.GetAccentColor()
             addLbl:SetTextColor(ar, ag, ab, 0.6)

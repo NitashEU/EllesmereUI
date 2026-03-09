@@ -3044,6 +3044,13 @@ initFrame:SetScript("OnEvent", function(self)
             eyeBtn:SetScript("OnLeave", function(self) self:SetAlpha(0.4) end)
         end
 
+        local function RefreshAllTextures()
+            ns.RefreshAllSettings()
+            for _, plate in pairs(ns.friendlyPlates or {}) do
+                if ns.ApplyHealthBarTexture then ns.ApplyHealthBarTexture(plate) end
+            end
+        end
+
         local borderStyleRow
         borderStyleRow, h = W:DualRow(parent, y,
             { type="dropdown", text="Border Style",
@@ -3098,13 +3105,6 @@ initFrame:SetScript("OnEvent", function(self)
             local off = isBorderNone()
             swatch:SetAlpha(off and 0.15 or 1)
             swatch:EnableMouse(not off)
-        end
-
-        local function RefreshAllTextures()
-            ns.RefreshAllSettings()
-            for _, plate in pairs(ns.friendlyPlates or {}) do
-                if ns.ApplyHealthBarTexture then ns.ApplyHealthBarTexture(plate) end
-            end
         end
 
         _, h = W:Spacer(parent, y, 20);  y = y - h
@@ -5008,21 +5008,13 @@ initFrame:SetScript("OnEvent", function(self)
         container:SetFrameLevel(parentRow:GetFrameLevel() + 2)
 
         -- Simple 1px solid border using the user's nameplate border color.
-        -- Uses two-point anchoring + DisablePixelSnap (same as dropdown borders)
-        -- for pixel-perfect rendering inside the scroll frame.
-        local function DisablePixelSnap(obj)
-            if obj.SetSnapToPixelGrid then
-                obj:SetSnapToPixelGrid(false)
-                obj:SetTexelSnappingBias(0)
-            end
-        end
+        -- Uses two-point anchoring for pixel-perfect rendering inside the scroll frame.
         local function MakePreviewBorder(parent)
             local bc = (DB() and DB().borderColor) or defaults.borderColor
             local edges = {}
             local function mkE()
                 local t = parent:CreateTexture(nil, "OVERLAY", nil, 7)
                 t:SetColorTexture(bc.r, bc.g, bc.b, 1)
-                PP.DisablePixelSnap(t)
                 edges[#edges + 1] = t
                 return t
             end
@@ -5041,13 +5033,11 @@ initFrame:SetScript("OnEvent", function(self)
 
             local health = CreateFrame("StatusBar", nil, container)
             health:SetStatusBarTexture("Interface\\Buttons\\WHITE8x8")
-            PP.DisablePixelSnap(health:GetStatusBarTexture())
             health:SetMinMaxValues(0, 100)
             health:SetValue(healthPct)
             health:SetAllPoints()
 
             local bg = health:CreateTexture(nil, "BACKGROUND")
-            PP.DisablePixelSnap(bg)
             bg:SetAllPoints()
             bg:SetColorTexture(0.20, 0.20, 0.20, 1.0)
 
@@ -5221,7 +5211,6 @@ initFrame:SetScript("OnEvent", function(self)
                 local bc = (DB() and DB().borderColor) or defaults.borderColor
                 for _, tex in ipairs(container._brdEdges) do
                     tex:SetColorTexture(bc.r, bc.g, bc.b, 1)
-                    PP.DisablePixelSnap(tex)
                 end
             end
 
@@ -5230,13 +5219,11 @@ initFrame:SetScript("OnEvent", function(self)
 
             local cast = CreateFrame("StatusBar", nil, container)
             cast:SetStatusBarTexture("Interface\\Buttons\\WHITE8x8")
-            PP.DisablePixelSnap(cast:GetStatusBarTexture())
             cast:SetMinMaxValues(0, 1)
             cast:SetValue(NextCastFill())
             cast:SetAllPoints()
 
             local castBG = cast:CreateTexture(nil, "BACKGROUND")
-            PP.DisablePixelSnap(castBG)
             castBG:SetAllPoints()
             castBG:SetColorTexture(0.20, 0.20, 0.20, 0.9)
 

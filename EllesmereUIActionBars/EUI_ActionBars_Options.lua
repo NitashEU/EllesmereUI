@@ -388,10 +388,11 @@ initFrame:SetScript("OnEvent", function(self)
         -- Our custom bar frame (may be nil during first build before bars are created)
         local barFrame = _G["EABBar_" .. barKey]
 
-        -- Read the real button size from the first actual button
+        -- Read the real button size from the first actual button.
+        -- Round to nearest integer to eliminate floating-point noise.
         local btn1 = _G[barInfo.buttonPrefix .. "1"]
-        local realBtnW = (btn1 and btn1:GetWidth() or 0)
-        local realBtnH = (btn1 and btn1:GetHeight() or 0)
+        local realBtnW = math.floor((btn1 and btn1:GetWidth() or 0) + 0.5)
+        local realBtnH = math.floor((btn1 and btn1:GetHeight() or 0) + 0.5)
         if realBtnW < 1 then realBtnW = 36 end
         if realBtnH < 1 then realBtnH = 36 end
 
@@ -416,16 +417,14 @@ initFrame:SetScript("OnEvent", function(self)
 
         -- Pixel-snap helper for the preview's effective scale
         local function Snap(val)
-            local s = pf:GetEffectiveScale()
-            return math.floor(val * s + 0.5) / s
+            return EllesmereUI.PP.SnapForES(val, pf:GetEffectiveScale())
         end
 
-        -- Scale-aware snap: snaps val to the pixel grid at pf's scale * barScale.
-        -- Mirrors SnapForScale from the real bars so button sizes stay pixel-perfect
-        -- at every barScale value, preventing jumpy borders during slider drags.
+        -- Scale-aware snap: snaps val to whole physical pixels at the preview's
+        -- effective scale * barScale. Uses the same approach as the border system.
         local function SnapS(val, scale)
-            local s = pf:GetEffectiveScale() * (scale or 1)
-            return math.floor(val * s + 0.5) / s
+            local es = pf:GetEffectiveScale() * (scale or 1)
+            return EllesmereUI.PP.SnapForES(val, es)
         end
 
         -- Disable WoW's automatic pixel snapping on a texture
@@ -2157,6 +2156,66 @@ initFrame:SetScript("OnEvent", function(self)
                 end)
             end
 
+            -- Row 4: Out of Range Coloring (toggle + inline swatch) | empty
+            local rangeRow
+            rangeRow, h = W:DualRow(parent, y,
+                { type="toggle", text="Out of Range Coloring",
+                  getValue=function()
+                      local v = SGet("outOfRangeColoring")
+                      if v == MIXED then return SDB().outOfRangeColoring or false end
+                      return v or false
+                  end,
+                  setValue=function(v)
+                      SSet("outOfRangeColoring", v, function() EAB:ApplyRangeColoring() end)
+                      EllesmereUI:RefreshPage()
+                  end },
+                { type="label", text="" });  y = y - h
+            SWrap(rangeRow._leftRegion, "outOfRangeColoring", function() EAB:ApplyRangeColoring() end)
+
+            -- Inline color swatch for range color
+            do
+                local leftRgn = rangeRow._leftRegion
+                local rangeColorGet = function()
+                    local c = SGet("outOfRangeColor")
+                    if c == MIXED then c = SDB().outOfRangeColor end
+                    if not c then return 0.8, 0.1, 0.1 end
+                    return c.r, c.g, c.b
+                end
+                local rangeColorSet = function(r, g, b)
+                    SSetColor("outOfRangeColor", r, g, b, nil, function() EAB:ApplyRangeColoring() end)
+                end
+                local rangeSwatch, rangeUpdateSwatch = EllesmereUI.BuildColorSwatch(leftRgn, leftRgn:GetFrameLevel() + 5, rangeColorGet, rangeColorSet, false, 20)
+                PP.Point(rangeSwatch, "RIGHT", leftRgn._control, "LEFT", -12, 0)
+                leftRgn._lastInline = rangeSwatch
+
+                local function RangeDisabled()
+                    local v = SGet("outOfRangeColoring")
+                    if v == MIXED then return not SDB().outOfRangeColoring end
+                    return not v
+                end
+
+                EllesmereUI.RegisterWidgetRefresh(function()
+                    local off = RangeDisabled()
+                    rangeSwatch:SetAlpha(off and 0.3 or 1)
+                    rangeUpdateSwatch()
+                end)
+                rangeSwatch:SetAlpha(RangeDisabled() and 0.3 or 1)
+
+                -- Block overlay when disabled
+                local rangeBlock = CreateFrame("Frame", nil, rangeSwatch)
+                rangeBlock:SetAllPoints()
+                rangeBlock:SetFrameLevel(rangeSwatch:GetFrameLevel() + 10)
+                rangeBlock:EnableMouse(true)
+                rangeBlock:SetScript("OnEnter", function()
+                    EllesmereUI.ShowWidgetTooltip(rangeSwatch, EllesmereUI.DisabledTooltip("Out of Range Coloring"))
+                end)
+                rangeBlock:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
+                EllesmereUI.RegisterWidgetRefresh(function()
+                    rangeBlock:SetShown(RangeDisabled())
+                end)
+                rangeBlock:SetShown(RangeDisabled())
+            end
+
             _, h = W:Spacer(parent, y, 20);  y = y - h
 
             -------------------------------------------------------------------
@@ -2795,7 +2854,6 @@ initFrame:SetScript("OnEvent", function(self)
             for i = 1, 4 do
                 local t = f:CreateTexture(nil, "OVERLAY", nil, 2)
                 t:SetColorTexture(1, 1, 1, 1)
-                PP.DisablePixelSnap(t)
                 f._borderOv[i] = t
             end
         end

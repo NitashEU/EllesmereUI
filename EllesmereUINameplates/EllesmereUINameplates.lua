@@ -245,13 +245,6 @@ local function ApplyHealthBarTexture(plate)
     else
         health:SetStatusBarTexture("Interface\\Buttons\\WHITE8x8")
     end
-    local ft = health:GetStatusBarTexture()
-    if ft then
-        local PP = EllesmereUI and EllesmereUI.PP
-        if PP then PP.DisablePixelSnap(ft) else
-            if ft.SetSnapToPixelGrid then ft:SetSnapToPixelGrid(false); ft:SetTexelSnappingBias(0) end
-        end
-    end
 end
 ns.ApplyHealthBarTexture = ApplyHealthBarTexture
 
@@ -974,9 +967,6 @@ local frameCache = CreateFramePool("Frame", UIParent, nil, nil, false, function(
     plate.health:SetSize(GetHealthBarWidth(), GetHealthBarHeight())
     plate.health:SetStatusBarTexture("Interface\\Buttons\\WHITE8x8")
     plate.health:SetClipsChildren(true)
-    do local PP = EllesmereUI and EllesmereUI.PP
-        if PP then PP.DisablePixelSnap(plate.health) end
-    end
     plate.healthBG = plate.health:CreateTexture(nil, "BACKGROUND")
     plate.healthBG:SetAllPoints()
     plate.healthBG:SetColorTexture(0.12, 0.12, 0.12, 1.0)
@@ -1030,9 +1020,6 @@ local frameCache = CreateFramePool("Frame", UIParent, nil, nil, false, function(
     plate.absorb:SetWidth(GetHealthBarWidth())
     plate.absorb:SetHeight(GetHealthBarHeight())
     plate.absorb:SetFrameLevel(plate.health:GetFrameLevel())
-    do local PP = EllesmereUI and EllesmereUI.PP
-        if PP then PP.DisablePixelSnap(plate.absorb) end
-    end
     plate.absorbOverflow = CreateFrame("StatusBar", nil, plate.health)
     plate.absorbOverflow:SetStatusBarTexture("Interface\\AddOns\\EllesmereUINameplates\\Media\\absorb-default.png")
     plate.absorbOverflow:GetStatusBarTexture():SetDrawLayer("ARTWORK", 1)
@@ -1067,7 +1054,6 @@ local frameCache = CreateFramePool("Frame", UIParent, nil, nil, false, function(
     local BORDER_CORNER = 6
 
     local function CreateBorderSet(parent, tex, color)
-        local PP = EllesmereUI and EllesmereUI.PP
         local f = CreateFrame("Frame", nil, parent)
         f:SetFrameLevel(parent:GetFrameLevel() + 5)
         f:SetAllPoints()
@@ -1076,7 +1062,6 @@ local frameCache = CreateFramePool("Frame", UIParent, nil, nil, false, function(
             local t = f:CreateTexture(nil, "OVERLAY", nil, 7)
             t:SetTexture(tex)
             t:SetVertexColor(color.r, color.g, color.b)
-            if PP then PP.DisablePixelSnap(t) end
             f._texs[#f._texs + 1] = t
             return t
         end
@@ -1231,17 +1216,11 @@ local frameCache = CreateFramePool("Frame", UIParent, nil, nil, false, function(
     plate.cast:SetStatusBarTexture("Interface\\Buttons\\WHITE8x8")
     plate.cast:SetMinMaxValues(0, 1)
     plate.cast:Hide()
-    do local PP = EllesmereUI and EllesmereUI.PP
-        if PP then PP.DisablePixelSnap(plate.cast) end
-    end
     plate.castBG = plate.cast:CreateTexture(nil, "BACKGROUND")
     plate.castBG:SetAllPoints()
     plate.castBG:SetColorTexture(0.1, 0.1, 0.1, 0.9)
     plate.castLeftBorder = plate.cast:CreateTexture(nil, "OVERLAY", nil, 7)
     plate.castLeftBorder:SetColorTexture(0, 0, 0, 1)
-    do local PP = EllesmereUI and EllesmereUI.PP
-        if PP then PP.DisablePixelSnap(plate.castLeftBorder) end
-    end
     plate.castLeftBorder:SetWidth(1)
     plate.castLeftBorder:SetPoint("TOPLEFT", plate.cast, "TOPLEFT", 0, 0)
     plate.castLeftBorder:SetPoint("BOTTOMLEFT", plate.cast, "BOTTOMLEFT", 0, 0)
@@ -3599,6 +3578,7 @@ function NameplateFrame:UpdateAuras(updateInfo)
                 if id and (showAll or (importantSet and importantSet[id])) then
                         local slot = self.debuffs[dIdx]
                         slot.icon:SetTexture(aura.icon)
+                        slot.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
                         if GetCount then
                             slot.count:SetText(GetCount(unit, id, 2, 1000) or "")
                         end
@@ -3656,6 +3636,7 @@ function NameplateFrame:UpdateAuras(updateInfo)
                 if id and type(aura.dispelName) ~= "nil" then
                     local slot = self.buffs[bIdx]
                     slot.icon:SetTexture(aura.icon)
+                    slot.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
                     if GetCount then
                         slot.count:SetText(GetCount(unit, id, 2, 1000) or "")
                     end
@@ -3687,6 +3668,7 @@ function NameplateFrame:UpdateAuras(updateInfo)
                     ccShown = ccShown + 1
                     local slot = self.cc[ccShown]
                     slot.icon:SetTexture(aura.icon)
+                    slot.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
                     slot.icon:Show()
                     local cd = slot.cd
                     if cd and GetDur then
@@ -4242,10 +4224,16 @@ local function UpdateFactionFrameForZone()
 end
 
 factionFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+factionFrame:RegisterEvent("ROLE_CHANGED_INFORM")
+factionFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
 factionFrame:SetScript("OnEvent", function(_, event, unit)
-    if event == "PLAYER_ENTERING_WORLD" then
+    if event == "PLAYER_ENTERING_WORLD"
+    or event == "ROLE_CHANGED_INFORM"
+    or event == "GROUP_ROSTER_UPDATE" then
         RefreshThreatCache()
-        UpdateFactionFrameForZone()
+        if event == "PLAYER_ENTERING_WORLD" then
+            UpdateFactionFrameForZone()
+        end
         return
     end
     -- UNIT_FACTION dispatch

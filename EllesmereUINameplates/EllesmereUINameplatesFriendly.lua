@@ -413,9 +413,6 @@ local friendlyFrameCache = CreateFramePool("Frame", UIParent, nil, nil, false, f
     plate.health:SetPoint("CENTER", 0, FRIENDLY_PLATE_Y_OFFSET)
     plate.health:SetSize(GetFriendlyHealthBarWidth(), GetFriendlyHealthBarHeight())
     plate.health:SetStatusBarTexture("Interface\\Buttons\\WHITE8x8")
-    do local PP = EllesmereUI and EllesmereUI.PP
-        if PP then PP.DisablePixelSnap(plate.health) end
-    end
 
     plate.healthBG = plate.health:CreateTexture(nil, "BACKGROUND")
     plate.healthBG:SetAllPoints()
@@ -431,7 +428,6 @@ local friendlyFrameCache = CreateFramePool("Frame", UIParent, nil, nil, false, f
         local PP = EllesmereUI and EllesmereUI.PP
         local t = plate.borderFrame:CreateTexture(nil, "OVERLAY", nil, 7)
         t:SetTexture(BORDER_TEX)
-        if PP then PP.DisablePixelSnap(t) end
         return t
     end
 

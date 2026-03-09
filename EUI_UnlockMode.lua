@@ -846,9 +846,6 @@ local function GetGuide(idx)
     if guidePool[idx] then return guidePool[idx] end
     local tex = unlockFrame:CreateTexture(nil, "OVERLAY", nil, 6)
     tex:SetColorTexture(1, 1, 1, 1)
-    local PP = EllesmereUI and EllesmereUI.PP
-    if PP then PP.DisablePixelSnap(tex)
-    elseif tex.SetSnapToPixelGrid then tex:SetSnapToPixelGrid(false); tex:SetTexelSnappingBias(0) end
     guidePool[idx] = tex
     return tex
 end

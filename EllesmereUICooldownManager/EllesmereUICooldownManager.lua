@@ -21,13 +21,13 @@ local function SetCDMFont(fs, font, size)
     else fs:SetShadowOffset(0, 0) end
 end
 
--- Snap a value to the nearest physical pixel at a given bar scale
+-- Snap a value to a whole number of physical pixels at the bar's effective scale.
+-- Uses the same approach as the border system: convert to physical pixels,
+-- round to nearest integer, convert back.
 local function SnapForScale(x, barScale)
     if x == 0 then return 0 end
-    local m = PP.perfect / ((UIParent:GetScale() or 1) * (barScale or 1))
-    if m == 1 then return x end
-    local y = m > 1 and m or -m
-    return x - x % (x < 0 and y or -y)
+    local es = (UIParent:GetScale() or 1) * (barScale or 1)
+    return PP.SnapForES(x, es)
 end
 
 local floor, abs, format = math.floor, math.abs, string.format
@@ -213,6 +213,8 @@ local _tickBlizzBuffChildCache = {} -- [resolvedSid] = blizzChild, only from Buf
 local _ecmeChildHasDurObj = {}   -- [ch] = true when we have captured a DurationObject for this child
 local _ecmeDurObjCache = {}      -- [ch] = durObj captured from SetCooldownFromDurationObject hook
 local _ecmeRawStartCache = {}    -- [ch] = start captured from SetCooldown hook
+local _cdmVehicleProxy           -- SecureHandlerStateTemplate proxy for [vehicleui]/[petbattle] hiding
+local _cdmInVehicle = false      -- true when [vehicleui] or [petbattle] is active
 local _ecmeRawDurCache = {}      -- [ch] = dur captured from SetCooldown hook
 
 -- Check if a Blizzard CDM buff-viewer child represents an actively running effect.
@@ -225,6 +227,8 @@ local function IsBufChildCooldownActive(ch)
     local totemSlot = ch.preferredTotemUpdateSlot
     if totemSlot and type(totemSlot) == "number" and totemSlot > 0 then
         local haveTotem = GetTotemInfo(totemSlot)
+        -- haveTotem can be a secret boolean in combat; secret = active totem
+        if issecretvalue and issecretvalue(haveTotem) then return true end
         if haveTotem then return true end
         return false
     end
@@ -1006,6 +1010,9 @@ local function DeepCopy(src)
     return copy
 end
 
+-- Forward declaration — defined after RACE_RACIALS is built
+local RefreshRacialSpells
+
 --- Save the current spec's per-spec data into specProfiles[specKey]
 local function SaveCurrentSpecProfile()
     local p = ECME.db.profile
@@ -1140,7 +1147,7 @@ local function LoadSpecProfile(specKey)
         if barData.barType == "trinkets" and barData.anchorTo and barData.anchorTo ~= "none" then
             local anchor = barKeySet[barData.anchorTo]
             if anchor and anchor.barType ~= "trinkets" and not MAIN_BAR_KEYS[anchor.key] then
-                -- Anchored to a custom bar ├â╞Æ├é┬ó├â┬ó├óΓé¼┼í├é┬¼├â┬ó├óΓÇÜ┬¼├é┬¥ check if that bar has spells
+                -- Anchored to a custom bar — check if that bar has spells
                 local spells = anchor.customSpells
                 if not spells or #spells == 0 then
                     barData.anchorTo = "none"
@@ -1151,6 +1158,9 @@ local function LoadSpecProfile(specKey)
             end
         end
     end
+
+    -- Replace any stale racial spellIDs with the current character's racial
+    RefreshRacialSpells()
 end
 
 --- Full spec switch: save current, load new, rebuild everything
@@ -1919,7 +1929,7 @@ end
 local TRINKET_SLOT_1 = 13
 local TRINKET_SLOT_2 = 14
 
--- Racial abilities by internal race name ├â╞Æ├é┬ó├â┬ó├óΓÇÜ┬¼├é┬á├â┬ó├óΓÇÜ┬¼├óΓÇ₧┬ó list of spellIDs
+-- Racial abilities by internal race name — list of spellIDs
 -- Entries with a table { spellID, class="CLASS" } are class-restricted.
 local RACE_RACIALS = {
     Scourge            = { 7744 },
@@ -1949,13 +1959,41 @@ local RACE_RACIALS = {
     Haranir            = { 1287685 },
 }
 
--- Health potions / healthstones: { itemID, spellID [, class] }
+-- Flat set of every racial spellID across all races (for fast lookup)
+local ALL_RACIAL_SPELLS = {}
+for _, racials in pairs(RACE_RACIALS) do
+    for _, entry in ipairs(racials) do
+        local sid = type(entry) == "table" and entry[1] or entry
+        ALL_RACIAL_SPELLS[sid] = true
+    end
+end
+
+-- Cached racial spells for the current character (populated in OnEnable)
+-- _myRacials: ordered array of spellIDs valid for this race+class
+-- _myRacialsSet: [spellID]=true for fast membership check
+local _myRacials = {}
+local _myRacialsSet = {}
+
+-- No-op: racial substitution is now done at render time in UpdateTrackedBarIcons.
+-- Forward declaration is kept so call sites in LoadSpecProfile/OnEnable compile.
+RefreshRacialSpells = function() end
+
+-- Health potions / healthstones: { itemID, spellID [, class] [, combatLockout] }
 local HEALTH_ITEMS = {
     { itemID = 241304, spellID = 1234768 },                      -- Silvermoon Health Potion
     { itemID = 241308, spellID = 1236616 },                      -- Light's Potential
-    { itemID = 5512,   spellID = 6262 },                         -- Healthstone
+    { itemID = 5512,   spellID = 6262, combatLockout = true },   -- Healthstone
     { itemID = 224464, spellID = 452930, class = "WARLOCK" },    -- Demonic Healthstone
 }
+
+-- Reverse lookup: spellID -> HEALTH_ITEMS entry (for item-aware cooldown/count display)
+local HEALTH_ITEM_BY_SPELL = {}
+for _, hi in ipairs(HEALTH_ITEMS) do
+    HEALTH_ITEM_BY_SPELL[hi.spellID] = hi
+end
+
+-- Combat lockout state: [spellID] = true while item was used in combat
+local _healthCombatLockout = {}
 
 -- Cached player info (set once at PLAYER_LOGIN)
 local _playerRace, _playerClass
@@ -2539,7 +2577,7 @@ LayoutCDMBar = function(barKey)
         totalW = numRows * iconW + (numRows - 1) * spacing
         totalH = stride * iconH + (stride - 1) * spacing
     end
-    frame:SetSize(totalW, totalH)
+    frame:SetSize(SnapForScale(totalW, barScale), SnapForScale(totalH, barScale))
 
     -- Bar opacity (affects entire bar, but respect visibility overrides)
     local vis = barData.barVisibility or "always"
@@ -2561,7 +2599,6 @@ LayoutCDMBar = function(barKey)
         frame._barBg:SetPoint("TOPLEFT", 0, 0)
         frame._barBg:SetPoint("BOTTOMRIGHT", 0, 0)
         frame._barBg:SetColorTexture(barData.barBgR or 0, barData.barBgG or 0, barData.barBgB or 0, 0.5)
-        PP.DisablePixelSnap(frame._barBg)
         frame._barBg:Show()
     elseif frame._barBg then
         frame._barBg:Hide()
@@ -2574,9 +2611,9 @@ LayoutCDMBar = function(barKey)
     -- Frame bounding box == icon grid, so frame CENTER == icon grid center.
     -- Partial rows (fewer icons than stride) are centered within the frame width.
     for i, icon in ipairs(visibleIcons) do
-        PP.Size(icon, iconW, iconH)
+        icon:SetSize(iconW, iconH)
         if icon._glowOverlay then
-            icon._glowOverlay:SetSize(iconW + 6, iconH + 6)
+            icon._glowOverlay:SetSize(iconW + SnapForScale(6, barScale), iconH + SnapForScale(6, barScale))
         end
         icon:ClearAllPoints()
 
@@ -2591,25 +2628,25 @@ LayoutCDMBar = function(barKey)
         if grow == "RIGHT" then
             local flippedRow = (numRows - 1) - row
             -- Center partial rows: offset by half the missing icons' width
-            local rowOffset = math.floor((stride - iconsInRow) * stepW / 2)
-            PP.Point(icon, "TOPLEFT", frame, "TOPLEFT",
+            local rowOffset = SnapForScale((stride - iconsInRow) * stepW / 2, barScale)
+            icon:SetPoint("TOPLEFT", frame, "TOPLEFT",
                 col * stepW + rowOffset,
                 -(flippedRow * stepH))
         elseif grow == "LEFT" then
             local flippedRow = (numRows - 1) - row
-            local rowOffset = math.floor((stride - iconsInRow) * stepW / 2)
-            PP.Point(icon, "TOPRIGHT", frame, "TOPRIGHT",
+            local rowOffset = SnapForScale((stride - iconsInRow) * stepW / 2, barScale)
+            icon:SetPoint("TOPRIGHT", frame, "TOPRIGHT",
                 -(col * stepW + rowOffset),
                 -(flippedRow * stepH))
         elseif grow == "DOWN" then
             local flippedRow = (numRows - 1) - row
-            local rowOffset = math.floor((stride - iconsInRow) * stepH / 2)
-            PP.Point(icon, "TOPLEFT", frame, "TOPLEFT",
+            local rowOffset = SnapForScale((stride - iconsInRow) * stepH / 2, barScale)
+            icon:SetPoint("TOPLEFT", frame, "TOPLEFT",
                 flippedRow * stepW,
                 -(col * stepH + rowOffset))
         elseif grow == "UP" then
-            local rowOffset = math.floor((stride - iconsInRow) * stepH / 2)
-            PP.Point(icon, "BOTTOMLEFT", frame, "BOTTOMLEFT",
+            local rowOffset = SnapForScale((stride - iconsInRow) * stepH / 2, barScale)
+            icon:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT",
                 row * stepW,
                 col * stepH + rowOffset)
         end
@@ -2641,7 +2678,6 @@ local function CreateCDMIcon(barKey, index)
     local bg = icon:CreateTexture(nil, "BACKGROUND")
     bg:SetAllPoints()
     bg:SetColorTexture(barData.bgR or 0.08, barData.bgG or 0.08, barData.bgB or 0.08, barData.bgA or 0.6)
-    PP.DisablePixelSnap(bg)
     icon._bg = bg
 
     -- Icon texture
@@ -2649,15 +2685,13 @@ local function CreateCDMIcon(barKey, index)
     PP.Point(tex, "TOPLEFT", icon, "TOPLEFT", borderSize, -borderSize)
     PP.Point(tex, "BOTTOMRIGHT", icon, "BOTTOMRIGHT", -borderSize, borderSize)
     tex:SetTexCoord(zoom, 1 - zoom, zoom, 1 - zoom)
-    PP.DisablePixelSnap(tex)
     icon._tex = tex
 
-    -- Cooldown overlay (frame level above icon so swipe renders on top of texture)
+    -- Cooldown overlay
     local cd = CreateFrame("Cooldown", nil, icon, "CooldownFrameTemplate")
     cd:SetFrameLevel(icon:GetFrameLevel() + 1)
     cd:EnableMouse(false)
-    PP.Point(cd, "TOPLEFT", icon, "TOPLEFT", borderSize, -borderSize)
-    PP.Point(cd, "BOTTOMRIGHT", icon, "BOTTOMRIGHT", -borderSize, borderSize)
+    cd:SetAllPoints(icon)
     cd:SetDrawEdge(false)
     cd:SetDrawSwipe(true)
     cd:SetDrawBling(false)
@@ -2971,8 +3005,8 @@ local function UpdateCustomBarIcons(barKey)
     if not barData or not barData.enabled then return end
 
 
-    local spells = barData.customSpells
-    if not spells or #spells == 0 then
+    local rawSpells = barData.customSpells
+    if not rawSpells or #rawSpells == 0 then
         -- Hide all icons
         local icons = cdmBarIcons[barKey]
         if icons then
@@ -2983,6 +3017,25 @@ local function UpdateCustomBarIcons(barKey)
     end
 
     local icons = cdmBarIcons[barKey]
+
+    -- Build spell list with render-time racial substitution
+    local spells = rawSpells
+    if _myRacials[1] then
+        local needsSub = false
+        for _, sid in ipairs(rawSpells) do
+            if ALL_RACIAL_SPELLS[sid] and not _myRacialsSet[sid] then needsSub = true; break end
+        end
+        if needsSub then
+            spells = {}
+            for _, sid in ipairs(rawSpells) do
+                if ALL_RACIAL_SPELLS[sid] and not _myRacialsSet[sid] then
+                    spells[#spells + 1] = _myRacials[1]
+                else
+                    spells[#spells + 1] = sid
+                end
+            end
+        end
+    end
 
     -- Active animation setup (same as tracked/mirrored bar paths)
     local activeAnim = barData.activeStateAnim or "blizzard"
@@ -3023,6 +3076,60 @@ local function UpdateCustomBarIcons(barKey)
                     visibleCount = visibleCount + 1
                 else
                     ourIcon:Hide()
+                end
+            else
+            -- Health item handling: show item icon, count, desaturation, combat lockout
+            local healthItem = HEALTH_ITEM_BY_SPELL[spellID]
+            if healthItem then
+                local itemCount = C_Item.GetItemCount(healthItem.itemID, false, true) or 0
+                local inLockout = _healthCombatLockout[spellID]
+                -- Hide if player has none and not in combat lockout
+                if itemCount <= 0 and not inLockout then
+                    ourIcon:Hide()
+                else
+                    local tex = C_Item.GetItemIconByID(healthItem.itemID)
+                    if tex then
+                        if tex ~= ourIcon._lastTex then
+                            ourIcon._tex:SetTexture(tex)
+                            ourIcon._lastTex = tex
+                        end
+                        -- Desaturate when count is 0 (combat lockout keeps icon visible but grayed)
+                        if itemCount <= 0 then
+                            ourIcon._tex:SetDesaturation(1)
+                            ourIcon._cooldown:Clear()
+                            ourIcon._lastDesat = true
+                        else
+                            -- Item cooldown via C_Container.GetItemCooldown
+                            local cdStart, cdDur = C_Container.GetItemCooldown(healthItem.itemID)
+                            if cdStart and cdDur and cdDur > 1.5 then
+                                ourIcon._cooldown:SetCooldown(cdStart, cdDur)
+                                if barData.desaturateOnCD then
+                                    ourIcon._tex:SetDesaturation(1)
+                                    ourIcon._lastDesat = true
+                                elseif ourIcon._lastDesat then
+                                    ourIcon._tex:SetDesaturation(0)
+                                    ourIcon._lastDesat = false
+                                end
+                            else
+                                ourIcon._cooldown:Clear()
+                                if ourIcon._lastDesat then
+                                    ourIcon._tex:SetDesaturation(0)
+                                    ourIcon._lastDesat = false
+                                end
+                            end
+                        end
+                        -- Show item count as charge text
+                        if barData.showCharges and itemCount > 0 then
+                            ourIcon._chargeText:SetText(tostring(itemCount))
+                            ourIcon._chargeText:Show()
+                        else
+                            ourIcon._chargeText:Hide()
+                        end
+                        ourIcon:Show()
+                        visibleCount = visibleCount + 1
+                    else
+                        ourIcon:Hide()
+                    end
                 end
             else
             -- Resolve talent override: if the user added Holy Prism but the player
@@ -3229,6 +3336,11 @@ local function UpdateCustomBarIcons(barKey)
 
                 ApplySpellCooldown(ourIcon, resolvedID, barData.desaturateOnCD, barData.showCharges, swAlpha, skipCDDisplay)
 
+                -- Buff bars: swipe fills as buff expires (starts empty, ends full).
+                if isBuffBarForOverride then
+                    ourIcon._cooldown:SetReverse(auraHandled)
+                end
+
                 -- If this is a live Blizzard activation override, read the charge
                 -- count directly from the Blizzard child's Applications frame.
                 -- GetSpellCharges returns secret values in combat for these spells,
@@ -3274,6 +3386,7 @@ local function UpdateCustomBarIcons(barKey)
             else
                 ourIcon:Hide()
             end
+            end -- healthItem else
             end -- spellID < 0 else
         end
     end
@@ -3420,6 +3533,12 @@ UpdateCDMBarIcons = function(barKey)
                 ourIcon._chargeText:Hide()
             end
 
+            -- Buff bars: swipe fills as buff expires (starts empty, ends full).
+            local isBuffBar = (barKey == "buffs" or barData.barType == "buffs")
+            if isBuffBar then
+                ourIcon._cooldown:SetReverse(auraHandled)
+            end
+
             -- Active state animation (consolidated)
             ApplyActiveAnimation(ourIcon, auraHandled, barData, barKey, activeAnim, animR, animG, animB, swAlpha)
 
@@ -3527,7 +3646,6 @@ local function RefreshCDMIconAppearance(barKey)
         -- Update background
         if icon._bg then
             icon._bg:SetColorTexture(barData.bgR or 0.08, barData.bgG or 0.08, barData.bgB or 0.08, barData.bgA or 0.6)
-            PP.DisablePixelSnap(icon._bg)
         end
         -- Update charge text font/position
         if icon._chargeText then
@@ -3663,11 +3781,18 @@ local function UpdateTrackedBarIcons(barKey)
     local visCount = 0
 
     -- Build combined spell list: tracked + extras
+    -- For extras, substitute any racial spellID from another race with this character's racial.
     local combined = {}
     for _, sid in ipairs(tracked) do combined[#combined + 1] = sid end
     local extras = barData.extraSpells
     if extras then
-        for _, sid in ipairs(extras) do combined[#combined + 1] = sid end
+        for _, sid in ipairs(extras) do
+            if ALL_RACIAL_SPELLS[sid] and not _myRacialsSet[sid] and _myRacials[1] then
+                combined[#combined + 1] = _myRacials[1]
+            else
+                combined[#combined + 1] = sid
+            end
+        end
     end
 
     -- Ensure we have enough icon frames
@@ -3700,6 +3825,56 @@ local function UpdateTrackedBarIcons(barKey)
                 ourIcon:Hide()
             end
         else
+            -- Health item handling: show item icon, count, desaturation, combat lockout
+            local healthItem = HEALTH_ITEM_BY_SPELL[spellID]
+            if healthItem then
+                local itemCount = C_Item.GetItemCount(healthItem.itemID, false, true) or 0
+                local inLockout = _healthCombatLockout[spellID]
+                if itemCount <= 0 and not inLockout then
+                    ourIcon:Hide()
+                else
+                    local tex = C_Item.GetItemIconByID(healthItem.itemID)
+                    if tex then
+                        if tex ~= ourIcon._lastTex then
+                            ourIcon._tex:SetTexture(tex)
+                            ourIcon._lastTex = tex
+                        end
+                        if itemCount <= 0 then
+                            ourIcon._tex:SetDesaturation(1)
+                            ourIcon._cooldown:Clear()
+                            ourIcon._lastDesat = true
+                        else
+                            local cdStart, cdDur = C_Container.GetItemCooldown(healthItem.itemID)
+                            if cdStart and cdDur and cdDur > 1.5 then
+                                ourIcon._cooldown:SetCooldown(cdStart, cdDur)
+                                if desatOnCD then
+                                    ourIcon._tex:SetDesaturation(1)
+                                    ourIcon._lastDesat = true
+                                elseif ourIcon._lastDesat then
+                                    ourIcon._tex:SetDesaturation(0)
+                                    ourIcon._lastDesat = false
+                                end
+                            else
+                                ourIcon._cooldown:Clear()
+                                if ourIcon._lastDesat then
+                                    ourIcon._tex:SetDesaturation(0)
+                                    ourIcon._lastDesat = false
+                                end
+                            end
+                        end
+                        if showCharges and itemCount > 0 then
+                            ourIcon._chargeText:SetText(tostring(itemCount))
+                            ourIcon._chargeText:Show()
+                        else
+                            ourIcon._chargeText:Hide()
+                        end
+                        ourIcon:Show()
+                        visCount = visCount + 1
+                    else
+                        ourIcon:Hide()
+                    end
+                end
+            else
             -- Resolve talent override
             local resolvedID = spellID
             if C_SpellBook and C_SpellBook.FindSpellOverrideByID then
@@ -3873,6 +4048,11 @@ local function UpdateTrackedBarIcons(barKey)
                 -- Spell cooldown + desaturation
                 ApplySpellCooldown(ourIcon, resolvedID, desatOnCD, showCharges, swAlpha, skipCDDisplay)
 
+                -- Buff bars: swipe fills as buff expires (starts empty, ends full).
+                if isBuffBarForOvr then
+                    ourIcon._cooldown:SetReverse(auraHandled)
+                end
+
                 -- Active state animation
                 ApplyActiveAnimation(ourIcon, auraHandled, barData, barKey, activeAnim, animR, animG, animB, swAlpha)
 
@@ -3914,6 +4094,7 @@ local function UpdateTrackedBarIcons(barKey)
                 -- No texture available yet (spell not in spellbook?)
                 ourIcon:Hide()
             end
+            end -- healthItem else
         end
     end
 
@@ -4140,6 +4321,8 @@ local function _CDMApplyVisibility()
     local p = ECME.db and ECME.db.profile
     if not p then return end
     local inCombat = _inCombat
+    -- Full vehicle UI: hide all bars
+    local inVehicle = _cdmInVehicle
     -- Housing detection
     local inHousing = false
     if C_Map and C_Map.GetBestMapForUnit then
@@ -4153,7 +4336,11 @@ local function _CDMApplyVisibility()
             local vis = barData.barVisibility or "always"
             local hideHousing = barData.housingHideEnabled ~= false
 
-            if hideHousing and inHousing then
+            if inVehicle then
+                _CDMStopFade(frame)
+                frame:SetAlpha(0)
+                if frame.EnableMouseMotion then frame:EnableMouseMotion(false) end
+            elseif hideHousing and inHousing then
                 _CDMStopFade(frame)
                 frame:SetAlpha(0)
                 if frame.EnableMouseMotion then frame:EnableMouseMotion(false) end
@@ -4352,6 +4539,19 @@ BuildAllCDMBars = function()
     _CDMApplyVisibility()
     UpdateCDMKeybinds()
 
+    -- Ensure vehicle/petbattle proxy exists to trigger _CDMApplyVisibility on state change
+    if not _cdmVehicleProxy then
+        _cdmVehicleProxy = CreateFrame("Frame", nil, UIParent, "SecureHandlerStateTemplate")
+        _cdmVehicleProxy:SetAttribute("_onstate-cdmvehicle", [[
+            self:CallMethod("OnVehicleStateChanged", newstate)
+        ]])
+        _cdmVehicleProxy.OnVehicleStateChanged = function(_, state)
+            _cdmInVehicle = (state == "hide")
+            _CDMApplyVisibility()
+        end
+        RegisterStateDriver(_cdmVehicleProxy, "cdmvehicle", "[vehicleui][petbattle] hide; show")
+    end
+
     -- Batch-apply pending cooldown font styling (single deferred call, no per-icon closures)
     C_Timer.After(0, function()
         for _, icons in pairs(cdmBarIcons) do
@@ -4423,15 +4623,12 @@ local function GetExtraSpells()
             if (not reqClass or reqClass == _playerClass) then
                 local ok, inBook = pcall(C_SpellBook.IsSpellInSpellBook, sid)
                 if ok and inBook then
-                    local sName = C_Spell.GetSpellName(sid)
                     local sTex  = C_Spell.GetSpellTexture(sid)
-                    if sName then
-                        extras[#extras + 1] = {
-                            spellID = sid, cdID = nil,
-                            name = sName, icon = sTex,
-                            isKnown = true, isDisplayed = false, isExtra = true,
-                        }
-                    end
+                    extras[#extras + 1] = {
+                        spellID = sid, cdID = nil,
+                        name = "Racial", icon = sTex,
+                        isKnown = true, isDisplayed = false, isExtra = true,
+                    }
                 end
             end
         end
@@ -4784,6 +4981,8 @@ function ns.RemoveTrackedSpell(barKey, idx)
                     table.remove(list, idx)
                     local frame = cdmBarFrames[barKey]
                     if frame then frame._blizzCache = nil; frame._prevVisibleCount = nil end
+                    -- Persist to spec profile immediately so spec switches don't restore removed spells
+                    if p.activeSpecKey and p.activeSpecKey ~= "0" then SaveCurrentSpecProfile() end
                     return true
                 end
             else
@@ -4799,11 +4998,15 @@ function ns.RemoveTrackedSpell(barKey, idx)
                     end
                     local frame = cdmBarFrames[barKey]
                     if frame then frame._blizzCache = nil; frame._prevVisibleCount = nil end
+                    -- Persist to spec profile immediately so spec switches don't restore removed spells
+                    if p.activeSpecKey and p.activeSpecKey ~= "0" then SaveCurrentSpecProfile() end
                     return true
                 elseif idx > #tracked and idx <= #tracked + #extras then
                     table.remove(extras, idx - #tracked)
                     local frame = cdmBarFrames[barKey]
                     if frame then frame._blizzCache = nil; frame._prevVisibleCount = nil end
+                    -- Persist to spec profile immediately so spec switches don't restore removed spells
+                    if p.activeSpecKey and p.activeSpecKey ~= "0" then SaveCurrentSpecProfile() end
                     return true
                 end
             end
@@ -5252,6 +5455,24 @@ function ECME:OnEnable()
     _playerRace = select(2, UnitRace("player"))
     _playerClass = select(2, UnitClass("player"))
 
+    -- Build cached racial spell list for this character (used for render-time substitution)
+    table.wipe(_myRacials)
+    table.wipe(_myRacialsSet)
+    local racialList = _playerRace and RACE_RACIALS[_playerRace]
+    if racialList then
+        for _, entry in ipairs(racialList) do
+            local sid = type(entry) == "table" and entry[1] or entry
+            local reqClass = type(entry) == "table" and entry.class or nil
+            if not reqClass or reqClass == _playerClass then
+                _myRacials[#_myRacials + 1] = sid
+                _myRacialsSet[sid] = true
+            end
+        end
+    end
+
+    -- Update any saved racial spellIDs to match this character's race
+    RefreshRacialSpells()
+
     -- Enable CDM cooldown viewer (keep Blizzard CDM running in background
     -- so we can read its children even while hidden)
     if C_CVar and C_CVar.SetCVar then
@@ -5677,6 +5898,35 @@ local function ReconcileMainBarSpells()
         end
     end
     BuildAllCDMBars()
+
+    -- After rebuilding icons, re-apply proc glows for any spells that are
+    -- still overlayed. BuildAllCDMBars wipes _blizzChild mappings; wait one
+    -- tick for UpdateCDMBarIcons to re-establish them, then re-check.
+    C_Timer.After(0.1, function()
+        if not (C_SpellActivationOverlay and C_SpellActivationOverlay.IsSpellOverlayed) then return end
+        local viewers = { "EssentialCooldownViewer", "UtilityCooldownViewer", "BuffIconCooldownViewer" }
+        for _, vName in ipairs(viewers) do
+            local vf = _G[vName]
+            local barKey = _blizzViewerToBarKey[vName]
+            if vf and barKey then
+                for ci = 1, vf:GetNumChildren() do
+                    local ch = select(ci, vf:GetChildren())
+                    if ch then
+                        local spellID = ResolveBlizzChildSpellID(ch)
+                        if spellID then
+                            local ok, overlayed = pcall(C_SpellActivationOverlay.IsSpellOverlayed, spellID)
+                            if ok and overlayed then
+                                local ourIcon = FindOurIconForBlizzChild(barKey, ch)
+                                if ourIcon then
+                                    ShowProcGlow(ourIcon, PROC_GLOW_R, PROC_GLOW_G, PROC_GLOW_B)
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end)
 end
 -- Keep old name as alias so existing callers work during transition
 ForceResnapshotMainBars = ReconcileMainBarSpells
@@ -5721,10 +5971,9 @@ function ECME:CDMFinishSetup()
     BuildAllCDMBars()
     ns.BuildTrackedBuffBars()
 
-    C_Timer.After(1, ForceResnapshotMainBars)
-    C_Timer.After(3, ForceResnapshotMainBars)
     -- Force Blizzard viewers on-screen briefly so their children populate,
     -- then snapshot. Handles the case where viewers never populate on their own.
+    -- StartResnapshotRetry handles all retries; no extra eager timers needed.
     ForcePopulateBlizzardViewers(function()
         ForceResnapshotMainBars()
         StartResnapshotRetry()
@@ -5764,6 +6013,7 @@ eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
 eventFrame:RegisterEvent("SPELLS_CHANGED")
 eventFrame:RegisterUnitEvent("UNIT_AURA", "player")
+eventFrame:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
 eventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
 eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 eventFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
@@ -5812,7 +6062,7 @@ local function ScheduleTalentRebuild()
     end)
 end
 local _unitAuraTimer = nil
-eventFrame:SetScript("OnEvent", function(_, event, unit, updateInfo)
+eventFrame:SetScript("OnEvent", function(_, event, unit, updateInfo, arg3)
     if not ECME.db then return end
     if event == "PLAYER_LOGOUT" then
         -- Save current spec profile on logout
@@ -5827,6 +6077,18 @@ eventFrame:SetScript("OnEvent", function(_, event, unit, updateInfo)
     end
     if event == "SPELL_ACTIVATION_OVERLAY_GLOW_SHOW" or event == "SPELL_ACTIVATION_OVERLAY_GLOW_HIDE" then
         OnProcGlowEvent(event, unit)  -- unit = spellID (first arg after event)
+        return
+    end
+    if event == "UNIT_SPELLCAST_SUCCEEDED" then
+        -- Track health item usage for combat lockout (healthstone stays visible
+        -- but grayed out until combat ends when used in combat)
+        local castSpellID = arg3  -- 3rd payload arg = spellID
+        if castSpellID then
+            local hi = HEALTH_ITEM_BY_SPELL[castSpellID]
+            if hi and hi.combatLockout and InCombatLockdown() then
+                _healthCombatLockout[castSpellID] = true
+            end
+        end
         return
     end
     if event == "UPDATE_BINDINGS" or event == "ACTIONBAR_SLOT_CHANGED" then
@@ -5866,6 +6128,10 @@ eventFrame:SetScript("OnEvent", function(_, event, unit, updateInfo)
         -- Flush deferred keybind rebuild that was blocked during combat
         if event == "PLAYER_REGEN_ENABLED" and _keybindRebuildPending then
             UpdateCDMKeybinds()
+        end
+        -- Clear health item combat lockout when leaving combat
+        if event == "PLAYER_REGEN_ENABLED" then
+            wipe(_healthCombatLockout)
         end
         -- Refresh resolved aura IDs now that names are readable again
         if event == "PLAYER_REGEN_ENABLED" then

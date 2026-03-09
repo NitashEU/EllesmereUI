@@ -89,6 +89,7 @@ initFrame:SetScript("OnEvent", function(self)
         local _, cf = UnitClass("player")
         local spec = GetSpecialization()
         if cf == "SHAMAN" and spec == 1 then return true end -- Elemental
+        if cf == "PRIEST" and spec == 3 then return true end -- Shadow
         if cf == "MONK" and spec == 1 then return true end -- Brewmaster
         if cf == "DEMONHUNTER" and spec then
             local specID = C_SpecializationInfo and C_SpecializationInfo.GetSpecializationInfo(spec)
@@ -300,15 +301,13 @@ initFrame:SetScript("OnEvent", function(self)
                 local pipSp = (sp.pipSpacing > 0) and math.max(onePx, PipSnap(sp.pipSpacing)) or 0
                 local snappedPipH = PipSnap(sp.pipHeight)
                 local numPips = 5
-                -- Available width for pips = total minus all gaps
+                local isVertical = (sp.pipOrientation or "HORIZONTAL") == "VERTICAL"
+                -- Available length for pips along the stacking axis
                 local availW = totalW - (numPips - 1) * pipSp
-                -- Base pip width: floor to nearest physical pixel
                 local baseW = math.floor(availW * pcScale / numPips) / pcScale
-                -- Remainder pixels distributed 1px each to the first R pips
                 local leftover = availW - baseW * numPips
                 local extraCount = math.floor(leftover * pcScale + 0.5)
 
-                -- Compute left-edge positions and widths for each pip
                 local pipX = {}
                 local pipW = {}
                 local x0 = 0
@@ -317,7 +316,11 @@ initFrame:SetScript("OnEvent", function(self)
                     pipW[i] = baseW + (i <= extraCount and onePx or 0)
                     x0 = x0 + pipW[i] + pipSp
                 end
-                pc:SetSize(totalW, snappedPipH)
+                if isVertical then
+                    pc:SetSize(snappedPipH, totalW)
+                else
+                    pc:SetSize(totalW, snappedPipH)
+                end
 
                 local filledCount
                 if sp.thresholdEnabled then
@@ -329,9 +332,15 @@ initFrame:SetScript("OnEvent", function(self)
                 local tr, tg, tb = sp.thresholdR, sp.thresholdG, sp.thresholdB
 
                 for i, pip in ipairs(_previewFrames.pips) do
-                    pip:SetSize(pipW[i], snappedPipH)
-                    pip:ClearAllPoints()
-                    pip:SetPoint("LEFT", pc, "LEFT", pipX[i], 0)
+                    if isVertical then
+                        pip:SetSize(snappedPipH, pipW[i])
+                        pip:ClearAllPoints()
+                        pip:SetPoint("TOP", pc, "TOP", 0, -pipX[i])
+                    else
+                        pip:SetSize(pipW[i], snappedPipH)
+                        pip:ClearAllPoints()
+                        pip:SetPoint("LEFT", pc, "LEFT", pipX[i], 0)
+                    end
                     if sp.darkTheme then
                         pip._bg:SetColorTexture(DARK_BG_R, DARK_BG_G, DARK_BG_B, 1)
                     elseif sp.classColored then
@@ -1004,7 +1013,23 @@ initFrame:SetScript("OnEvent", function(self)
               end }
         );  y = y - h
 
-        -- Row 2: (Sync) Height | (Sync) Width
+        -- Row 2: Orientation | empty
+        _, h = W:DualRow(parent, y,
+            { type = "dropdown", text = "Orientation",
+              disabled = classOff,
+              disabledTooltip = "Enable Class Resource",
+              values = { HORIZONTAL = "Horizontal", VERTICAL = "Vertical" },
+              order  = { "HORIZONTAL", "VERTICAL" },
+              getValue = function() local p = DB(); return p and p.secondary.pipOrientation or "HORIZONTAL" end,
+              setValue = function(v)
+                  local p = DB(); if not p then return end
+                  p.secondary.pipOrientation = v; SmoothRefresh()
+                  EllesmereUI:RefreshPage()
+              end },
+            { type = "label", text = "" }
+        );  y = y - h
+
+        -- Row 3: (Sync) Height | (Sync) Width
         local classSizeRow
         classSizeRow, h = W:DualRow(parent, y,
             { type = "slider", text = "Height",
@@ -1334,18 +1359,18 @@ initFrame:SetScript("OnEvent", function(self)
         local threshRow
         threshRow, h = W:DualRow(parent, y,
             { type = "toggle", text = "Threshold Color",
-              disabled = function() local p = DB(); return p and (not p.secondary.enabled or IsBarTypeSecondary()) end,
-              disabledTooltip = function() local p = DB(); if p and not p.secondary.enabled then return "Enable Class Resource" end; if IsBarTypeSecondary() then return "This option is not available for your spec" end end,
+              disabled = function() local p = DB(); return p and not p.secondary.enabled end,
+              disabledTooltip = function() local p = DB(); if p and not p.secondary.enabled then return "Enable Class Resource" end end,
               getValue = function() local p = DB(); return p and p.secondary.thresholdEnabled end,
               setValue = function(v)
                   local p = DB(); if not p then return end
                   p.secondary.thresholdEnabled = v; RefreshClass()
                   EllesmereUI:RefreshPage()
               end },
-            { type = "slider", text = "Threshold Count",
-              min = 1, max = 10, step = 1,
-              disabled = function() local p = DB(); return p and (not p.secondary.enabled or not p.secondary.thresholdEnabled or IsBarTypeSecondary()) end,
-              disabledTooltip = function() local p = DB(); if p and not p.secondary.enabled then return "Enable Class Resource" end; if IsBarTypeSecondary() then return "This option is not available for your spec" end; return "This option requires Threshold Color to be enabled" end,
+            { type = "slider", text = "Threshold",
+              min = 1, max = IsBarTypeSecondary() and 100 or 10, step = 1,
+              disabled = function() local p = DB(); return p and (not p.secondary.enabled or not p.secondary.thresholdEnabled) end,
+              disabledTooltip = function() local p = DB(); if p and not p.secondary.enabled then return "Enable Class Resource" end; return "This option requires Threshold Color to be enabled" end,
               getValue = function() local p = DB(); return p and p.secondary.thresholdCount or 3 end,
               setValue = function(v)
                   local p = DB(); if not p then return end
@@ -1379,8 +1404,6 @@ initFrame:SetScript("OnEvent", function(self)
                 local p = DB()
                 if p and not p.secondary.enabled then
                     EllesmereUI.ShowWidgetTooltip(swatch, EllesmereUI.DisabledTooltip("Enable Class Resource"))
-                elseif IsBarTypeSecondary() then
-                    EllesmereUI.ShowWidgetTooltip(swatch, EllesmereUI.DisabledTooltip("This option is not available for your spec"))
                 else
                     EllesmereUI.ShowWidgetTooltip(swatch, EllesmereUI.DisabledTooltip("Threshold Color"))
                 end
@@ -1388,7 +1411,7 @@ initFrame:SetScript("OnEvent", function(self)
             swDis:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
             local function UpdateSwDis2()
                 local p = DB()
-                if p and (not p.secondary.enabled or not p.secondary.thresholdEnabled or IsBarTypeSecondary()) then swDis:Show() else swDis:Hide() end
+                if p and (not p.secondary.enabled or not p.secondary.thresholdEnabled) then swDis:Show() else swDis:Hide() end
             end
             swatch:HookScript("OnShow", UpdateSwDis2)
             EllesmereUI.RegisterWidgetRefresh(UpdateSwDis2)
@@ -1834,7 +1857,70 @@ initFrame:SetScript("OnEvent", function(self)
             UpdateCogDisP2()
         end
 
-        -- Row 5: Anchored To | Anchor Position (inline DIRECTIONS cog)
+        -- Row 5: Threshold Color (inline swatch) | Threshold % (percent-based)
+        local powerThreshRow
+        powerThreshRow, h = W:DualRow(parent, y,
+            { type = "toggle", text = "Threshold Color",
+              disabled = powerOff,
+              disabledTooltip = "Enable Power Bar",
+              getValue = function() local p = DB(); return p and p.primary.thresholdEnabled end,
+              setValue = function(v)
+                  local p = DB(); if not p then return end
+                  p.primary.thresholdEnabled = v; RefreshPower()
+                  EllesmereUI:RefreshPage()
+              end },
+            { type = "slider", text = "Threshold %",
+              min = 1, max = 99, step = 1,
+              disabled = function() local p = DB(); return p and (not p.primary.enabled or not p.primary.thresholdEnabled) end,
+              disabledTooltip = function() local p = DB(); if p and not p.primary.enabled then return "Enable Power Bar" end; return "Enable Threshold Color first" end,
+              getValue = function() local p = DB(); return p and p.primary.thresholdPct or 30 end,
+              setValue = function(v)
+                  local p = DB(); if not p then return end
+                  p.primary.thresholdPct = v; RefreshPower()
+              end }
+        );  y = y - h
+        -- Inline swatch on Threshold Color
+        do
+            local rgn = powerThreshRow._leftRegion
+            local swatch, _ = EllesmereUI.BuildColorSwatch(rgn, rgn:GetFrameLevel() + 2,
+                function()
+                    local p = DB()
+                    if not p then return 1, 0.2, 0.2, 1 end
+                    return p.primary.thresholdR, p.primary.thresholdG, p.primary.thresholdB, p.primary.thresholdA
+                end,
+                function(r, g, b, a)
+                    local p = DB(); if not p then return end
+                    p.primary.thresholdR, p.primary.thresholdG, p.primary.thresholdB, p.primary.thresholdA = r, g, b, a
+                    SmoothRefresh()
+                end, true, 20)
+            PP.Point(swatch, "RIGHT", rgn._lastInline or rgn._control, "LEFT", -12, 0)
+            rgn._lastInline = swatch
+            local swDis = CreateFrame("Frame", nil, rgn)
+            swDis:SetAllPoints(swatch)
+            swDis:SetFrameLevel(swatch:GetFrameLevel() + 5)
+            local swDisTex = swDis:CreateTexture(nil, "OVERLAY")
+            swDisTex:SetAllPoints()
+            swDisTex:SetColorTexture(0.12, 0.12, 0.12, 0.75)
+            swDis:EnableMouse(true)
+            swDis:SetScript("OnEnter", function()
+                local p = DB()
+                if p and not p.primary.enabled then
+                    EllesmereUI.ShowWidgetTooltip(swatch, EllesmereUI.DisabledTooltip("Enable Power Bar"))
+                else
+                    EllesmereUI.ShowWidgetTooltip(swatch, EllesmereUI.DisabledTooltip("Threshold Color"))
+                end
+            end)
+            swDis:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
+            local function UpdatePowerThreshSwDis()
+                local p = DB()
+                if p and (not p.primary.enabled or not p.primary.thresholdEnabled) then swDis:Show() else swDis:Hide() end
+            end
+            swatch:HookScript("OnShow", UpdatePowerThreshSwDis)
+            EllesmereUI.RegisterWidgetRefresh(UpdatePowerThreshSwDis)
+            UpdatePowerThreshSwDis()
+        end
+
+        -- Row 6: Anchored To | Anchor Position (inline DIRECTIONS cog)
         local powerAnchorRow
         powerAnchorRow, h = W:DualRow(parent, y,
             { type = "dropdown", text = "Anchored To",
@@ -2223,7 +2309,70 @@ initFrame:SetScript("OnEvent", function(self)
             UpdateCogDisH2()
         end
 
-        -- Row 5: Anchored To | Anchor Position (inline DIRECTIONS cog)
+        -- Row 5: Threshold Color (inline swatch) | Threshold % (percent-based)
+        local healthThreshRow
+        healthThreshRow, h = W:DualRow(parent, y,
+            { type = "toggle", text = "Threshold Color",
+              disabled = healthOff,
+              disabledTooltip = "Enable Health Bar",
+              getValue = function() local p = DB(); return p and p.health.thresholdEnabled end,
+              setValue = function(v)
+                  local p = DB(); if not p then return end
+                  p.health.thresholdEnabled = v; RefreshHealth()
+                  EllesmereUI:RefreshPage()
+              end },
+            { type = "slider", text = "Threshold %",
+              min = 1, max = 99, step = 1,
+              disabled = function() local p = DB(); return p and (not p.health.enabled or not p.health.thresholdEnabled) end,
+              disabledTooltip = function() local p = DB(); if p and not p.health.enabled then return "Enable Health Bar" end; return "Enable Threshold Color first" end,
+              getValue = function() local p = DB(); return p and p.health.thresholdPct or 30 end,
+              setValue = function(v)
+                  local p = DB(); if not p then return end
+                  p.health.thresholdPct = v; RefreshHealth()
+              end }
+        );  y = y - h
+        -- Inline swatch on Threshold Color
+        do
+            local rgn = healthThreshRow._leftRegion
+            local swatch, _ = EllesmereUI.BuildColorSwatch(rgn, rgn:GetFrameLevel() + 2,
+                function()
+                    local p = DB()
+                    if not p then return 1, 0.2, 0.2, 1 end
+                    return p.health.thresholdR, p.health.thresholdG, p.health.thresholdB, p.health.thresholdA
+                end,
+                function(r, g, b, a)
+                    local p = DB(); if not p then return end
+                    p.health.thresholdR, p.health.thresholdG, p.health.thresholdB, p.health.thresholdA = r, g, b, a
+                    SmoothRefresh()
+                end, true, 20)
+            PP.Point(swatch, "RIGHT", rgn._lastInline or rgn._control, "LEFT", -12, 0)
+            rgn._lastInline = swatch
+            local swDis = CreateFrame("Frame", nil, rgn)
+            swDis:SetAllPoints(swatch)
+            swDis:SetFrameLevel(swatch:GetFrameLevel() + 5)
+            local swDisTex = swDis:CreateTexture(nil, "OVERLAY")
+            swDisTex:SetAllPoints()
+            swDisTex:SetColorTexture(0.12, 0.12, 0.12, 0.75)
+            swDis:EnableMouse(true)
+            swDis:SetScript("OnEnter", function()
+                local p = DB()
+                if p and not p.health.enabled then
+                    EllesmereUI.ShowWidgetTooltip(swatch, EllesmereUI.DisabledTooltip("Enable Health Bar"))
+                else
+                    EllesmereUI.ShowWidgetTooltip(swatch, EllesmereUI.DisabledTooltip("Threshold Color"))
+                end
+            end)
+            swDis:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
+            local function UpdateHealthThreshSwDis()
+                local p = DB()
+                if p and (not p.health.enabled or not p.health.thresholdEnabled) then swDis:Show() else swDis:Hide() end
+            end
+            swatch:HookScript("OnShow", UpdateHealthThreshSwDis)
+            EllesmereUI.RegisterWidgetRefresh(UpdateHealthThreshSwDis)
+            UpdateHealthThreshSwDis()
+        end
+
+        -- Row 6: Anchored To | Anchor Position (inline DIRECTIONS cog)
         local healthAnchorRow
         healthAnchorRow, h = W:DualRow(parent, y,
             { type = "dropdown", text = "Anchored To",

@@ -575,13 +575,15 @@ local AURAS = {
 -------------------------------------------------------------------------------
 -- Rogue Poisons (all non-secret in 12.0 but we treat as consumable = OOC check)
 local ROGUE_POISONS = {
-    { key="deadly",     name="Deadly Poison",     castSpell=2823,   buffIDs={2823} },
-    { key="instant",    name="Instant Poison",    castSpell=315584, buffIDs={315584} },
-    { key="wound",      name="Wound Poison",      castSpell=8679,   buffIDs={8679} },
-    { key="amplifying", name="Amplifying Poison", castSpell=381664, buffIDs={381664} },
-    { key="crippling",  name="Crippling Poison",  castSpell=3408,   buffIDs={3408} },
-    { key="numbing",    name="Numbing Poison",    castSpell=5761,   buffIDs={5761} },
-    { key="atrophic",   name="Atrophic Poison",   castSpell=381637, buffIDs={381637} },
+    -- Damage poisons are mutually exclusive (only 1 active at a time)
+    { key="deadly",     name="Deadly Poison",     castSpell=2823,   buffIDs={2823,315584,8679} },
+    { key="instant",    name="Instant Poison",    castSpell=315584, buffIDs={2823,315584,8679} },
+    { key="wound",      name="Wound Poison",      castSpell=8679,   buffIDs={2823,315584,8679} },
+    -- Utility poisons are mutually exclusive (only 1 active at a time)
+    { key="amplifying", name="Amplifying Poison", castSpell=381664, buffIDs={381664,3408,5761,381637} },
+    { key="crippling",  name="Crippling Poison",  castSpell=3408,   buffIDs={381664,3408,5761,381637} },
+    { key="numbing",    name="Numbing Poison",     castSpell=5761,   buffIDs={381664,3408,5761,381637} },
+    { key="atrophic",   name="Atrophic Poison",   castSpell=381637, buffIDs={381664,3408,5761,381637} },
 }
 
 -- Paladin Rites (non-secret in 12.0)

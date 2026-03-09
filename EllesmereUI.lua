@@ -653,6 +653,25 @@ do
     end
 
     ---------------------------------------------------------------------------
+    --  SnapForES(x, effectiveScale)
+    --
+    --  Snap a value to a whole number of physical pixels at the given
+    --  effective scale.  Uses the same approach as the border system:
+    --    onePixel = perfect / es   (size of 1 physical pixel in frame coords)
+    --    physPixels = floor(x / onePixel + 0.5)   (round to nearest whole pixel)
+    --    result = physPixels * onePixel
+    --
+    --  This guarantees every element sized through this function is exactly
+    --  N physical pixels, eliminating sub-pixel drift between siblings.
+    ---------------------------------------------------------------------------
+    function PP.SnapForES(x, es)
+        if x == 0 then return 0 end
+        local onePixel = PP.perfect / es
+        local physPixels = math.floor(x / onePixel + 0.5)
+        return physPixels * onePixel
+    end
+
+    ---------------------------------------------------------------------------
     --  Convenience wrappers — pixel-snapped frame geometry
     ---------------------------------------------------------------------------
     function PP.Size(frame, w, h)
@@ -721,6 +740,70 @@ do
             target:SetTexelSnappingBias(0)
         end
         obj.PixelSnapDisabled = true
+    end
+
+    ---------------------------------------------------------------------------
+    --  Global Pixel Snap Prevention
+    --
+    --  WoW re-enables pixel snapping whenever a texture's properties change
+    --  (SetTexture, SetColorTexture, SetVertexColor, SetTexCoord, etc.).
+    --  This hooks the widget metatables so that every texture/statusbar in
+    --  the game automatically has pixel snapping disabled after any property
+    --  change. Without this, manual DisablePixelSnap calls get undone by
+    --  Blizzard's code on spell swaps, page changes, combat transitions, etc.
+    ---------------------------------------------------------------------------
+    local function WatchPixelSnap(frame, snap)
+        if (frame and not frame:IsForbidden()) and frame.PixelSnapDisabled and snap then
+            frame.PixelSnapDisabled = nil
+        end
+    end
+
+    local function HookPixelSnap(object)
+        local mk = getmetatable(object)
+        if not mk then return end
+        mk = mk.__index
+        if not mk or mk.DisabledPixelSnap then return end
+
+        if mk.SetSnapToPixelGrid or mk.SetStatusBarTexture or mk.SetColorTexture
+           or mk.SetVertexColor or mk.CreateTexture or mk.SetTexCoord or mk.SetTexture then
+            if mk.SetSnapToPixelGrid then hooksecurefunc(mk, "SetSnapToPixelGrid", WatchPixelSnap) end
+            if mk.SetStatusBarTexture then hooksecurefunc(mk, "SetStatusBarTexture", PP.DisablePixelSnap) end
+            if mk.SetColorTexture then hooksecurefunc(mk, "SetColorTexture", PP.DisablePixelSnap) end
+            if mk.SetVertexColor then hooksecurefunc(mk, "SetVertexColor", PP.DisablePixelSnap) end
+            if mk.CreateTexture then hooksecurefunc(mk, "CreateTexture", PP.DisablePixelSnap) end
+            if mk.SetTexCoord then hooksecurefunc(mk, "SetTexCoord", PP.DisablePixelSnap) end
+            if mk.SetTexture then hooksecurefunc(mk, "SetTexture", PP.DisablePixelSnap) end
+            mk.DisabledPixelSnap = true
+        end
+    end
+
+    -- Hook all known widget types by creating one of each and hooking its metatable
+    local hookFrame = CreateFrame("Frame")
+    HookPixelSnap(hookFrame)
+    HookPixelSnap(hookFrame:CreateTexture())
+    HookPixelSnap(hookFrame:CreateFontString())
+    HookPixelSnap(hookFrame:CreateMaskTexture())
+
+    -- Enumerate all existing frame types to catch any we missed
+    local hookedTypes = { Frame = true }
+    local enumObj = EnumerateFrames()
+    while enumObj do
+        local objType = enumObj:GetObjectType()
+        if not enumObj:IsForbidden() and not hookedTypes[objType] then
+            HookPixelSnap(enumObj)
+            hookedTypes[objType] = true
+        end
+        enumObj = EnumerateFrames(enumObj)
+    end
+
+    -- Also hook ScrollFrame and StatusBar metatables
+    HookPixelSnap(CreateFrame("ScrollFrame"))
+    do
+        local sb = CreateFrame("StatusBar")
+        sb:SetStatusBarTexture("Interface\\Buttons\\WHITE8x8")
+        HookPixelSnap(sb)
+        local sbt = sb:GetStatusBarTexture()
+        if sbt then HookPixelSnap(sbt) end
     end
 
     ---------------------------------------------------------------------------
@@ -1741,6 +1824,13 @@ local function WirePopupEscape(popup, dimmer)
         else
             self:SetPropagateKeyboardInput(true)
         end
+    end)
+    -- Release keyboard capture when the popup is dismissed
+    dimmer:HookScript("OnHide", function()
+        popup:EnableKeyboard(false)
+    end)
+    dimmer:HookScript("OnShow", function()
+        popup:EnableKeyboard(true)
     end)
 end
 
@@ -5191,7 +5281,7 @@ end
 -------------------------------------------------------------------------------
 --  Slash commands
 -------------------------------------------------------------------------------
-EllesmereUI.VERSION = "3.8"
+EllesmereUI.VERSION = "3.8.5"
 
 -- Register this addon's version into a shared global table (taint-free at load time)
 if not _G._EUI_AddonVersions then _G._EUI_AddonVersions = {} end

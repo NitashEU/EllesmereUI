@@ -1172,3 +1172,367 @@ function EllesmereUI:ShowImportPopup(onImport)
         editBox:SetFocus()
     end)
 end
+
+-------------------------------------------------------------------------------
+--  CDM Layout Profiles
+--  Separate import/export system for CDM ability assignments only.
+--  Captures which spells are assigned to which bars and tracked buff bars,
+--  but NOT bar glows, visual styling, or positions.
+--
+--  Export format: !EUICDM_<base64 encoded compressed serialized data>
+--  Payload: { version = 1, bars = { ... }, buffBars = { ... } }
+--
+--  On import, the system:
+--    1. Decodes and validates the string
+--    2. Analyzes which spells need to be tracked/enabled in CDM
+--    3. Prints required spells to chat
+--    4. Blocks import until all spells are verified as tracked
+--    5. Applies the layout once verified
+-------------------------------------------------------------------------------
+local CDM_LAYOUT_PREFIX = "!EUICDM_"
+
+--- Snapshot the current CDM layout (spell assignments only, no styling/glows)
+function EllesmereUI.ExportCDMLayout()
+    local aceDB = _G._ECME_AceDB
+    if not aceDB or not aceDB.profile then return nil, "CDM not loaded" end
+    local p = aceDB.profile
+    if not p.cdmBars or not p.cdmBars.bars then return nil, "No CDM bars found" end
+
+    local layoutData = { bars = {}, buffBars = {} }
+
+    -- Capture bar definitions and spell assignments
+    for _, barData in ipairs(p.cdmBars.bars) do
+        local entry = {
+            key      = barData.key,
+            name     = barData.name,
+            barType  = barData.barType,
+            enabled  = barData.enabled,
+        }
+        -- Spell assignments depend on bar type
+        if barData.trackedSpells then
+            entry.trackedSpells = DeepCopy(barData.trackedSpells)
+        end
+        if barData.extraSpells then
+            entry.extraSpells = DeepCopy(barData.extraSpells)
+        end
+        if barData.removedSpells then
+            entry.removedSpells = DeepCopy(barData.removedSpells)
+        end
+        if barData.dormantSpells then
+            entry.dormantSpells = DeepCopy(barData.dormantSpells)
+        end
+        if barData.customSpells then
+            entry.customSpells = DeepCopy(barData.customSpells)
+        end
+        layoutData.bars[#layoutData.bars + 1] = entry
+    end
+
+    -- Capture tracked buff bars (spellID assignments only, not visual settings)
+    if p.trackedBuffBars and p.trackedBuffBars.bars then
+        for i, tbb in ipairs(p.trackedBuffBars.bars) do
+            layoutData.buffBars[#layoutData.buffBars + 1] = {
+                spellID = tbb.spellID,
+                name    = tbb.name,
+                enabled = tbb.enabled,
+            }
+        end
+    end
+
+    local payload = { version = 1, data = layoutData }
+    local serialized = Serializer.Serialize(payload)
+    if not LibDeflate then return nil, "LibDeflate not available" end
+    local compressed = LibDeflate:CompressDeflate(serialized)
+    local encoded = LibDeflate:EncodeForPrint(compressed)
+    return CDM_LAYOUT_PREFIX .. encoded
+end
+
+--- Decode a CDM layout import string without applying it
+function EllesmereUI.DecodeCDMLayoutString(importStr)
+    if not importStr or #importStr < #CDM_LAYOUT_PREFIX then
+        return nil, "Invalid string"
+    end
+    if importStr:sub(1, #CDM_LAYOUT_PREFIX) ~= CDM_LAYOUT_PREFIX then
+        return nil, "Not a valid CDM layout string (expected " .. CDM_LAYOUT_PREFIX .. " prefix)"
+    end
+    if not LibDeflate then return nil, "LibDeflate not available" end
+    local encoded = importStr:sub(#CDM_LAYOUT_PREFIX + 1)
+    local decoded = LibDeflate:DecodeForPrint(encoded)
+    if not decoded then return nil, "Failed to decode string" end
+    local decompressed = LibDeflate:DecompressDeflate(decoded)
+    if not decompressed then return nil, "Failed to decompress data" end
+    local payload = Serializer.Deserialize(decompressed)
+    if not payload or type(payload) ~= "table" then
+        return nil, "Failed to deserialize data"
+    end
+    if payload.version ~= 1 then
+        return nil, "Unsupported CDM layout version"
+    end
+    if not payload.data or not payload.data.bars then
+        return nil, "Invalid CDM layout data"
+    end
+    return payload.data, nil
+end
+
+--- Collect all unique spellIDs from a decoded CDM layout
+local function CollectLayoutSpellIDs(layoutData)
+    local spells = {}  -- { [spellID] = barName }
+    for _, bar in ipairs(layoutData.bars) do
+        local barName = bar.name or bar.key or "Unknown"
+        if bar.trackedSpells then
+            for _, sid in ipairs(bar.trackedSpells) do
+                if sid and sid > 0 then spells[sid] = barName end
+            end
+        end
+        if bar.extraSpells then
+            for _, sid in ipairs(bar.extraSpells) do
+                if sid and sid > 0 then spells[sid] = barName end
+            end
+        end
+        if bar.customSpells then
+            for _, sid in ipairs(bar.customSpells) do
+                if sid and sid > 0 then spells[sid] = barName end
+            end
+        end
+        -- dormantSpells are talent-dependent, include them too
+        if bar.dormantSpells then
+            for _, sid in ipairs(bar.dormantSpells) do
+                if sid and sid > 0 then spells[sid] = barName end
+            end
+        end
+        -- removedSpells are intentionally excluded from bars, don't require them
+    end
+    -- Buff bar spells
+    if layoutData.buffBars then
+        for _, tbb in ipairs(layoutData.buffBars) do
+            if tbb.spellID and tbb.spellID > 0 then
+                spells[tbb.spellID] = "Buff Bar: " .. (tbb.name or "Unknown")
+            end
+        end
+    end
+    return spells
+end
+
+--- Check which spells from a layout are currently tracked in CDM
+--- Returns: missingSpells (table of {spellID, name, barName}), allPresent (bool)
+function EllesmereUI.AnalyzeCDMLayoutSpells(layoutData)
+    local aceDB = _G._ECME_AceDB
+    if not aceDB or not aceDB.profile then
+        return {}, false
+    end
+    local p = aceDB.profile
+
+    -- Build set of all currently tracked spellIDs across all bars
+    local currentlyTracked = {}
+    if p.cdmBars and p.cdmBars.bars then
+        for _, barData in ipairs(p.cdmBars.bars) do
+            if barData.trackedSpells then
+                for _, sid in ipairs(barData.trackedSpells) do
+                    currentlyTracked[sid] = true
+                end
+            end
+            if barData.extraSpells then
+                for _, sid in ipairs(barData.extraSpells) do
+                    currentlyTracked[sid] = true
+                end
+            end
+            if barData.removedSpells then
+                for _, sid in ipairs(barData.removedSpells) do
+                    currentlyTracked[sid] = true
+                end
+            end
+            if barData.customSpells then
+                for _, sid in ipairs(barData.customSpells) do
+                    currentlyTracked[sid] = true
+                end
+            end
+            if barData.dormantSpells then
+                for _, sid in ipairs(barData.dormantSpells) do
+                    currentlyTracked[sid] = true
+                end
+            end
+        end
+    end
+    -- Also check buff bars
+    if p.trackedBuffBars and p.trackedBuffBars.bars then
+        for _, tbb in ipairs(p.trackedBuffBars.bars) do
+            if tbb.spellID and tbb.spellID > 0 then
+                currentlyTracked[tbb.spellID] = true
+            end
+        end
+    end
+
+    -- Compare against layout requirements
+    local requiredSpells = CollectLayoutSpellIDs(layoutData)
+    local missing = {}
+    for sid, barName in pairs(requiredSpells) do
+        if not currentlyTracked[sid] then
+            local spellName
+            if C_Spell and C_Spell.GetSpellName then
+                spellName = C_Spell.GetSpellName(sid)
+            end
+            missing[#missing + 1] = {
+                spellID = sid,
+                name    = spellName or ("Spell #" .. sid),
+                barName = barName,
+            }
+        end
+    end
+
+    -- Sort by bar name then spell name for readability
+    table.sort(missing, function(a, b)
+        if a.barName == b.barName then return a.name < b.name end
+        return a.barName < b.barName
+    end)
+
+    return missing, #missing == 0
+end
+
+--- Print missing spells to chat
+function EllesmereUI.PrintCDMLayoutMissingSpells(missing)
+    local EG = "|cff0cd29f"
+    local WHITE = "|cffffffff"
+    local YELLOW = "|cffffff00"
+    local GRAY = "|cff888888"
+    local R = "|r"
+
+    print(EG .. "EllesmereUI|r: CDM Layout Import - Spell Check")
+    print(EG .. "----------------------------------------------|r")
+
+    if #missing == 0 then
+        print(EG .. "All spells are already tracked. Ready to import.|r")
+        return
+    end
+
+    print(YELLOW .. #missing .. " spell(s) need to be enabled in CDM before importing:|r")
+    print(" ")
+
+    local lastBar = nil
+    for _, entry in ipairs(missing) do
+        if entry.barName ~= lastBar then
+            lastBar = entry.barName
+            print(EG .. "  [" .. entry.barName .. "]|r")
+        end
+        print(WHITE .. "    - " .. entry.name .. GRAY .. " (ID: " .. entry.spellID .. ")" .. R)
+    end
+
+    print(" ")
+    print(YELLOW .. "Enable these spells in CDM, then click Import again.|r")
+end
+
+--- Apply a decoded CDM layout to the current profile
+function EllesmereUI.ApplyCDMLayout(layoutData)
+    local aceDB = _G._ECME_AceDB
+    if not aceDB or not aceDB.profile then return false, "CDM not loaded" end
+    local p = aceDB.profile
+    if not p.cdmBars or not p.cdmBars.bars then return false, "No CDM bars found" end
+
+    -- Build a lookup of existing bars by key
+    local existingByKey = {}
+    for i, barData in ipairs(p.cdmBars.bars) do
+        existingByKey[barData.key] = barData
+    end
+
+    -- Apply spell assignments from the layout
+    for _, importBar in ipairs(layoutData.bars) do
+        local target = existingByKey[importBar.key]
+        if target then
+            -- Bar exists: update spell assignments only
+            if importBar.trackedSpells then
+                target.trackedSpells = DeepCopy(importBar.trackedSpells)
+            end
+            if importBar.extraSpells then
+                target.extraSpells = DeepCopy(importBar.extraSpells)
+            end
+            if importBar.removedSpells then
+                target.removedSpells = DeepCopy(importBar.removedSpells)
+            end
+            if importBar.dormantSpells then
+                target.dormantSpells = DeepCopy(importBar.dormantSpells)
+            end
+            if importBar.customSpells then
+                target.customSpells = DeepCopy(importBar.customSpells)
+            end
+            target.enabled = importBar.enabled
+        end
+        -- If bar doesn't exist (custom bar from another user), skip it.
+        -- We only apply to matching bar keys.
+    end
+
+    -- Apply tracked buff bars
+    if layoutData.buffBars and #layoutData.buffBars > 0 then
+        if not p.trackedBuffBars then
+            p.trackedBuffBars = { selectedBar = 1, bars = {} }
+        end
+        -- Merge: update existing buff bars by index, add new ones
+        for i, importTBB in ipairs(layoutData.buffBars) do
+            if p.trackedBuffBars.bars[i] then
+                -- Update existing buff bar's spell assignment
+                p.trackedBuffBars.bars[i].spellID = importTBB.spellID
+                p.trackedBuffBars.bars[i].name = importTBB.name
+                p.trackedBuffBars.bars[i].enabled = importTBB.enabled
+            else
+                -- Add new buff bar with default visual settings + imported spell
+                local newBar = {}
+                -- Use TBB defaults if available
+                local defaults = {
+                    spellID = importTBB.spellID,
+                    name = importTBB.name or ("Bar " .. i),
+                    enabled = importTBB.enabled ~= false,
+                    height = 24, width = 270,
+                    verticalOrientation = false,
+                    texture = "none",
+                    fillR = 0.05, fillG = 0.82, fillB = 0.62, fillA = 1,
+                    bgR = 0, bgG = 0, bgB = 0, bgA = 0.4,
+                    gradientEnabled = false,
+                    gradientR = 0.20, gradientG = 0.20, gradientB = 0.80, gradientA = 1,
+                    gradientDir = "HORIZONTAL",
+                    opacity = 1.0,
+                    showTimer = true, timerSize = 11, timerX = 0, timerY = 0,
+                    showName = true, nameSize = 11, nameX = 0, nameY = 0,
+                    showSpark = true,
+                    iconDisplay = "none", iconSize = 24, iconX = 0, iconY = 0,
+                    iconBorderSize = 0,
+                }
+                for k, v in pairs(defaults) do newBar[k] = v end
+                p.trackedBuffBars.bars[#p.trackedBuffBars.bars + 1] = newBar
+            end
+        end
+    end
+
+    -- Save to current spec profile
+    local specKey = p.activeSpecKey
+    if specKey and specKey ~= "0" and p.specProfiles then
+        -- Update the spec profile's barSpells to match
+        if not p.specProfiles[specKey] then p.specProfiles[specKey] = {} end
+        local prof = p.specProfiles[specKey]
+        prof.barSpells = {}
+        for _, barData in ipairs(p.cdmBars.bars) do
+            local key = barData.key
+            if key then
+                local entry = {}
+                if barData.trackedSpells then
+                    entry.trackedSpells = DeepCopy(barData.trackedSpells)
+                end
+                if barData.extraSpells then
+                    entry.extraSpells = DeepCopy(barData.extraSpells)
+                end
+                if barData.removedSpells then
+                    entry.removedSpells = DeepCopy(barData.removedSpells)
+                end
+                if barData.dormantSpells then
+                    entry.dormantSpells = DeepCopy(barData.dormantSpells)
+                end
+                if barData.customSpells then
+                    entry.customSpells = DeepCopy(barData.customSpells)
+                end
+                prof.barSpells[key] = entry
+            end
+        end
+        -- Update buff bars in spec profile
+        if p.trackedBuffBars then
+            prof.trackedBuffBars = DeepCopy(p.trackedBuffBars)
+        end
+    end
+
+    return true, nil
+end
